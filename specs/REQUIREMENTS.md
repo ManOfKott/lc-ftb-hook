@@ -8,7 +8,9 @@ The upkeep is a bit more complicated and follows a simple calculation. Let n be 
 
 c = b * n
 
-where b is the base price. The base price depends on what protection attributes are chosen in the FTB teams interface. The protections that should cost something is the mob grief protection (p1), explosion protection (p2), pvp disablement (p3), block interaction mode (p4) and block edit mode (p5). For each of those protections a price can be set in the servers config. The base price is the sum of all of these prices. p1, p2 and p3 are boolean values. If they are set to false, their price is added to the calculate
+where b is the base price. The base price depends on what protection attributes are chosen in the FTB teams interface. The protections that should cost something is the mob grief protection (p1), explosion protection (p2), pvp disablement (p3), block interaction mode (p4) and block edit mode (p5). For each of those protections a price can be set in the servers config. The base price is the sum of all of these prices. p1, p2 and p3 are boolean values. If they are set to false, their price is added to the calculation. p4 and p3 are added to the calculation once they are NOT set to public.
 
 ![FTB Chunks protection properties](images/Screenshot%202026-06-11%20195621.png)
+
+If a player account or the team account dont have enough money, all the protection should be set to their lowest values. p1, p2 and p3 should all be true then and p4 and p5 set to public. When the account balance is enough for the next period (which is configured), players can change the protections again. E.g. if no protection is selected and a player selects explosion protection to be activated (set to false), the mod calculates the new base price and thus the cost. If the balance is met, the protection change is enabled. If not, the change does not apply (visually there is no switch) and in the menu presented in the image an alert pops up.
 

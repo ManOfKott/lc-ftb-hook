@@ -19,7 +19,8 @@
     "client.ChunkScreenPanelChunkButtonMixin",
     "client.EditConfigScreenAccessor",
     "client.EditConfigScreenConfigEntryButtonMixin",
-    "client.EditConfigScreenMixin"
+    "client.EditConfigScreenMixin",
+    "client.MyTeamScreenSettingsButtonMixin"
   ],
   "injectors": {
     "defaultRequire": 1

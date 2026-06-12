@@ -104,6 +104,27 @@ public class TeamPropertyHandler {
                     continue;
                 }
 
+                // If the submitted value costs the same as the value that is
+                // currently active (e.g. Allies -> Private while a change to
+                // Public is queued), the change is cost-neutral: apply it
+                // immediately and drop the queued change.
+                TeamPendingState droppedState = pendingState.withoutPendingProperty(key);
+                long activePrice = ProtectionPricing.calculateBasePrice(previous, droppedState.pendingProperties());
+                long submittedPrice = ProtectionPricing.calculateBasePrice(
+                        previous, droppedState.withPendingProperty(key, serializedNew).pendingProperties());
+                if (activePrice == submittedPrice) {
+                    pendingState = droppedState;
+                    savedData.setPendingState(team.getTeamId(), pendingState);
+                    LCFtbHook.LOGGER.info("[PendingDebug] Team {}: {} = {} is cost-neutral vs active value, applied immediately, pending dropped; pending now: {}",
+                            team.getShortName(), key, serializedNew, pendingState.pendingProperties());
+                    if (!ProtectionService.canAffordNextPeriod(server, team, pendingState)) {
+                        revertProperty(server, team, previous, property);
+                        savedData.setProtectionLocked(team.getTeamId(), true);
+                        notifyProtectionDenied(team, "message.lc_ftb_hook.insufficient_funds_protection");
+                    }
+                    continue;
+                }
+
                 TeamPendingState replacedState = pendingState.withPendingProperty(key, serializedNew);
                 if (!ProtectionService.canAffordNextPeriod(server, team, replacedState)) {
                     LCFtbHook.LOGGER.info("[PendingDebug] Team {}: cannot afford replacement pending {}, reverting",

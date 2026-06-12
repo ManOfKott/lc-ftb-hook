@@ -43,6 +43,7 @@
   "message.lc_ftb_hook.party_disband_settlement": "Party disbanded: Team account held %1$s. %3$s chunks sold for %4$s. You received %2$s total on your personal account.",
   "message.lc_ftb_hook.party_join_claim_refund": "Your personal claims were dissolved when joining the party. Refunded %1$s for %2$s chunks.",
   "message.lc_ftb_hook.protection_change_pending": "Protection change queued until the next upkeep period.",
+  "message.lc_ftb_hook.protection_pending_cancelled": "Queued protection change discarded.",
   "message.lc_ftb_hook.forceload_change_pending": "Force-load change queued until the next upkeep period.",
   "gui.lc_ftb_hook.pending": "pending",
   "gui.lc_ftb_hook.pending_value": "→ %s pending",

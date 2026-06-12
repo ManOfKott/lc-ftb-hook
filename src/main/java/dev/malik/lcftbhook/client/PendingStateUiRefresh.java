@@ -24,11 +24,32 @@ public final class PendingStateUiRefresh {
     }
 
     /**
+     * Like {@link #syncOpenScreenValues(Team)}, but resolves the player's own
+     * team first. Used when only the pending state changed (our own packet),
+     * which carries no team reference.
+     */
+    public static void syncSelfTeamOpenScreen() {
+        if (!FTBTeamsAPI.api().isClientManagerLoaded()) {
+            return;
+        }
+        Team selfTeam = FTBTeamsAPI.api().getClientManager().selfTeam();
+        if (selfTeam != null) {
+            syncOpenScreenValues(selfTeam);
+        }
+    }
+
+    /**
      * Pushes the team's current (server-synced) property values into an open
      * properties screen. Without this, the screen keeps showing the value
      * snapshots taken when it was opened, so server-side changes (pending
      * changes applied at upkeep, reverts, resets) only become visible after
      * closing and reopening the menu.
+     *
+     * <p>Properties with a queued (pending) change are pre-filled with the
+     * queued value instead. This keeps the player's queued choice visible and
+     * editable, and it lets the server distinguish "untouched" (submits the
+     * queued value) from "switched back to the current value" (cancels the
+     * queued change) on the next accept.
      */
     public static void syncOpenScreenValues(Team team) {
         EditConfigScreen screen = ClientUtils.getCurrentGuiAs(EditConfigScreen.class);
@@ -54,13 +75,22 @@ public final class PendingStateUiRefresh {
                 return;
             }
 
-            Object newValue = propertyValue.getValue();
-            if (Objects.equals(config.getValue(), newValue)) {
-                return;
-            }
+            // Some property types expose a different value type than their
+            // screen config works on (e.g. set-backed properties vs a
+            // ListConfig). Skip those per entry instead of letting one
+            // mismatch abort the sync for all remaining entries.
+            try {
+                Object newValue = ClientPendingState.getDisplayValue(property, propertyValue.getValue());
+                if (Objects.equals(config.getValue(), newValue)) {
+                    return;
+                }
 
-            setConfigValue(config, newValue);
-            changed[0] = true;
+                setConfigValue(config, newValue);
+                changed[0] = true;
+            } catch (RuntimeException ignored) {
+                // Type mismatch between property value and config; leave the
+                // entry as it is.
+            }
         });
 
         if (changed[0]) {

@@ -9,6 +9,7 @@ import net.neoforged.neoforge.network.PacketDistributor;
 import org.spongepowered.asm.mixin.Final;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.Shadow;
+import org.spongepowered.asm.mixin.Unique;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
@@ -19,6 +20,14 @@ public class EditConfigScreenMixin {
     @Shadow(remap = false)
     @Final
     private Component title;
+    @Shadow(remap = false)
+    private boolean autoclose;
+    @Shadow(remap = false)
+    private boolean changed;
+
+    @Unique
+    private boolean lcFtbHook$suppressedAutoclose;
+
     @Inject(method = "onInit", at = @At("RETURN"), remap = false)
     private void lcFtbHook$requestPendingState(CallbackInfoReturnable<Boolean> callback) {
         if (Boolean.TRUE.equals(callback.getReturnValue())) {
@@ -27,8 +36,26 @@ public class EditConfigScreenMixin {
         }
     }
 
+    @Inject(method = "doAccept", at = @At("HEAD"), remap = false)
+    private void lcFtbHook$stayOpenOnAccept(CallbackInfo ci) {
+        // Keep the properties screen open after Accept instead of jumping
+        // back to the team screen.
+        if (title != null && isFtbChunksPropertiesTitle(title) && autoclose) {
+            autoclose = false;
+            lcFtbHook$suppressedAutoclose = true;
+        }
+    }
+
     @Inject(method = "doAccept", at = @At("TAIL"), remap = false)
     private void lcFtbHook$refreshPendingAfterAccept(CallbackInfo ci) {
+        if (lcFtbHook$suppressedAutoclose) {
+            // Restore so Cancel/ESC still closes the screen as usual, and
+            // clear the dirty flag so a later Cancel does not warn about
+            // unsaved changes that were in fact accepted.
+            autoclose = true;
+            lcFtbHook$suppressedAutoclose = false;
+            changed = false;
+        }
         PacketDistributor.sendToServer(new RequestClaimPricesPayload());
         PacketDistributor.sendToServer(new RequestPendingStatePayload());
     }

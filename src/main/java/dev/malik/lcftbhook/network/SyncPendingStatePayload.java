@@ -59,6 +59,9 @@ public record SyncPendingStatePayload(
                     payload.pendingForceLoads,
                     payload.pendingForceUnloads
             );
+            // Pre-fill queued values into an open properties screen and
+            // re-render so pending tags reflect the new state immediately.
+            PendingStateUiRefresh.syncSelfTeamOpenScreen();
             PendingStateUiRefresh.refreshOpenScreens();
         });
     }
