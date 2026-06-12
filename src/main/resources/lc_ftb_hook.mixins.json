@@ -1,0 +1,27 @@
+{
+  "required": true,
+  "package": "dev.malik.lcftbhook.mixin",
+  "compatibilityLevel": "JAVA_21",
+  "mixins": [
+    "ClaimedChunkManagerImplDeleteTeamMixin",
+    "FTBChunksPlayerJoinedPartyMixin",
+    "PartyTeamRankSyncMixin",
+    "TeamDataCacheRemoveTeamMixin",
+    "TeamRoleChangeMixin",
+    "RequestChunkChangePacketMixin"
+  ],
+    "client": [
+    "client.ChunkScreenPanelAccessor",
+    "ChunkScreenCustomBottomPanelMixin",
+    "ChunkScreenMixin",
+    "ChunkScreenPanelMixin",
+    "client.ChunkChangeResponsePacketClientMixin",
+    "client.ChunkScreenPanelChunkButtonMixin",
+    "client.EditConfigScreenAccessor",
+    "client.EditConfigScreenConfigEntryButtonMixin",
+    "client.EditConfigScreenMixin"
+  ],
+  "injectors": {
+    "defaultRequire": 1
+  }
+}

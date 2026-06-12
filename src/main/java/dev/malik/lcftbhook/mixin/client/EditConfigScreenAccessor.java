@@ -1,0 +1,11 @@
+package dev.malik.lcftbhook.mixin.client;
+
+import dev.ftb.mods.ftblibrary.config.ConfigGroup;
+import org.spongepowered.asm.mixin.Mixin;
+import org.spongepowered.asm.mixin.gen.Accessor;
+
+@Mixin(targets = "dev.ftb.mods.ftblibrary.config.ui.EditConfigScreen", remap = false)
+public interface EditConfigScreenAccessor {
+    @Accessor(value = "group", remap = false)
+    ConfigGroup lcFtbHook$getGroup();
+}

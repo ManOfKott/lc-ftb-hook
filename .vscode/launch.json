@@ -1,0 +1,71 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "type": "java",
+      "request": "launch",
+      "name": "Client 1",
+      "presentation": {
+        "group": "Mod Development - lc-ftb-hook",
+        "order": 0
+      },
+      "projectName": "lc-ftb-hook",
+      "mainClass": "net.neoforged.devlaunch.Main",
+      "args": [
+        "@C:\\Users\\malik\\Programming\\06_Minecraft\\lc-ftb-hook\\build\\moddev\\clientRunProgramArgs.txt"
+      ],
+      "vmArgs": [
+        "@C:\\Users\\malik\\Programming\\06_Minecraft\\lc-ftb-hook\\build\\moddev\\clientRunVmArgs.txt",
+        "-Dfml.modFolders\u003dlc_ftb_hook%%C:\\Users\\malik\\Programming\\06_Minecraft\\lc-ftb-hook\\bin\\main"
+      ],
+      "cwd": "${workspaceFolder}\\run",
+      "env": {},
+      "console": "internalConsole",
+      "shortenCommandLine": "none"
+    },
+    {
+      "type": "java",
+      "request": "launch",
+      "name": "Client 2",
+      "presentation": {
+        "group": "Mod Development - lc-ftb-hook",
+        "order": 1
+      },
+      "projectName": "lc-ftb-hook",
+      "mainClass": "net.neoforged.devlaunch.Main",
+      "args": [
+        "@C:\\Users\\malik\\Programming\\06_Minecraft\\lc-ftb-hook\\build\\moddev\\client2RunProgramArgs.txt"
+      ],
+      "vmArgs": [
+        "@C:\\Users\\malik\\Programming\\06_Minecraft\\lc-ftb-hook\\build\\moddev\\client2RunVmArgs.txt",
+        "-Dfml.modFolders\u003dlc_ftb_hook%%C:\\Users\\malik\\Programming\\06_Minecraft\\lc-ftb-hook\\bin\\main"
+      ],
+      "cwd": "${workspaceFolder}\\run-client2",
+      "env": {},
+      "console": "internalConsole",
+      "shortenCommandLine": "none"
+    },
+    {
+      "type": "java",
+      "request": "launch",
+      "name": "Server",
+      "presentation": {
+        "group": "Mod Development - lc-ftb-hook",
+        "order": 2
+      },
+      "projectName": "lc-ftb-hook",
+      "mainClass": "net.neoforged.devlaunch.Main",
+      "args": [
+        "@C:\\Users\\malik\\Programming\\06_Minecraft\\lc-ftb-hook\\build\\moddev\\serverRunProgramArgs.txt"
+      ],
+      "vmArgs": [
+        "@C:\\Users\\malik\\Programming\\06_Minecraft\\lc-ftb-hook\\build\\moddev\\serverRunVmArgs.txt",
+        "-Dfml.modFolders\u003dlc_ftb_hook%%C:\\Users\\malik\\Programming\\06_Minecraft\\lc-ftb-hook\\bin\\main"
+      ],
+      "cwd": "${workspaceFolder}\\run",
+      "env": {},
+      "console": "internalConsole",
+      "shortenCommandLine": "none"
+    }
+  ]
+}
