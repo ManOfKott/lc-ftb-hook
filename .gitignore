@@ -5,7 +5,7 @@ build/
 # IDE
 .idea/
 .eclipse/
-.vscode/settings.json
+.vscode/
 *.iml
 out/
 bin/
