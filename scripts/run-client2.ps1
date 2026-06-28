@@ -18,4 +18,7 @@ java -version
 Write-Host ""
 Write-Host "Starte zweiten Minecraft Dev-Client (DevPlayer2)..." -ForegroundColor Green
 Write-Host "Server zuerst starten, dann Client 1 (run-client.ps1), dann hier verbinden: Multiplayer -> Direct Connect -> localhost" -ForegroundColor Yellow
+
+& (Join-Path $PSScriptRoot "Apply-DevClientConfig.ps1")
+
 & .\gradlew.bat runClient2

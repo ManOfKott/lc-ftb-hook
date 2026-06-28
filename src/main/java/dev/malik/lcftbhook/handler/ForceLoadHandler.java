@@ -14,6 +14,7 @@ import dev.malik.lcftbhook.network.PendingStateSync;
 import dev.malik.lcftbhook.service.ProtectionService;
 import net.minecraft.commands.CommandSourceStack;
 import net.minecraft.network.chat.Component;
+import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerPlayer;
 import net.neoforged.neoforge.server.ServerLifecycleHooks;
 
@@ -38,7 +39,7 @@ public class ForceLoadHandler {
             return CompoundEventResult.interruptFalse(ClaimResult.customProblem("message.lc_ftb_hook.claim_rank_denied"));
         }
 
-        var server = ServerLifecycleHooks.getCurrentServer();
+        MinecraftServer server = ServerLifecycleHooks.getCurrentServer();
         if (server == null) {
             return CompoundEventResult.pass();
         }
@@ -50,8 +51,27 @@ public class ForceLoadHandler {
 
         TeamPendingState pendingState = savedData.getPendingState(team.getTeamId());
         String chunkKey = ChunkPosKey.encode(chunk.getPos());
-        TeamPendingState updated = pendingState.withPendingForceLoad(chunkKey);
 
+        // Toggle off a queued load, or undo a queued unload (same idea as cycling
+        // a protection setting back while a change is pending).
+        if (pendingState.isPendingForceLoad(chunkKey)) {
+            savedData.setPendingState(team.getTeamId(), pendingState.withoutPendingForceLoad(chunkKey));
+            PendingStateSync.syncTeam(server, team);
+            notifyForceLoadPendingCancelled(team);
+            return CompoundEventResult.interruptFalse(ClaimResult.success());
+        }
+        if (pendingState.isPendingForceUnload(chunkKey)) {
+            savedData.setPendingState(team.getTeamId(), pendingState.withoutPendingForceUnload(chunkKey));
+            PendingStateSync.syncTeam(server, team);
+            notifyForceLoadPendingCancelled(team);
+            return CompoundEventResult.interruptFalse(ClaimResult.success());
+        }
+
+        if (chunk.isForceLoaded()) {
+            return CompoundEventResult.pass();
+        }
+
+        TeamPendingState updated = pendingState.withPendingForceLoad(chunkKey);
         if (!ProtectionService.canAffordNextPeriod(server, team, updated)) {
             return CompoundEventResult.interruptFalse(ClaimResult.customProblem("message.lc_ftb_hook.insufficient_funds_protection"));
         }
@@ -79,7 +99,7 @@ public class ForceLoadHandler {
             return CompoundEventResult.interruptFalse(ClaimResult.customProblem("message.lc_ftb_hook.claim_rank_denied"));
         }
 
-        var server = ServerLifecycleHooks.getCurrentServer();
+        MinecraftServer server = ServerLifecycleHooks.getCurrentServer();
         if (server == null) {
             return CompoundEventResult.pass();
         }
@@ -88,9 +108,17 @@ public class ForceLoadHandler {
         TeamPendingState pendingState = savedData.getPendingState(team.getTeamId());
         String chunkKey = ChunkPosKey.encode(chunk.getPos());
 
+        if (pendingState.isPendingForceUnload(chunkKey)) {
+            savedData.setPendingState(team.getTeamId(), pendingState.withoutPendingForceUnload(chunkKey));
+            PendingStateSync.syncTeam(server, team);
+            notifyForceLoadPendingCancelled(team);
+            return CompoundEventResult.interruptFalse(ClaimResult.success());
+        }
+
         if (pendingState.isPendingForceLoad(chunkKey)) {
             savedData.setPendingState(team.getTeamId(), pendingState.withoutPendingForceLoad(chunkKey));
             PendingStateSync.syncTeam(server, team);
+            notifyForceLoadPendingCancelled(team);
             return CompoundEventResult.interruptFalse(ClaimResult.success());
         }
 
@@ -106,7 +134,15 @@ public class ForceLoadHandler {
     }
 
     private static void notifyForceLoadPending(Team team) {
-        Component message = Component.translatable("message.lc_ftb_hook.forceload_change_pending");
+        notifyTeam(team, "message.lc_ftb_hook.forceload_change_pending");
+    }
+
+    private static void notifyForceLoadPendingCancelled(Team team) {
+        notifyTeam(team, "message.lc_ftb_hook.forceload_pending_cancelled");
+    }
+
+    private static void notifyTeam(Team team, String messageKey) {
+        Component message = Component.translatable(messageKey);
         for (ServerPlayer member : team.getOnlineMembers()) {
             member.displayClientMessage(message, false);
         }

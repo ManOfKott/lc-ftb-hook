@@ -12,8 +12,11 @@ import dev.malik.lcftbhook.data.FtbHookSavedData;
 import dev.malik.lcftbhook.data.TeamPendingState;
 import dev.malik.lcftbhook.network.PendingStateSync;
 import dev.malik.lcftbhook.service.ClaimVisibilityService;
+import dev.malik.lcftbhook.service.ProtectionRollbackService;
 import dev.malik.lcftbhook.service.ProtectionPricing;
 import dev.malik.lcftbhook.service.ProtectionService;
+import dev.malik.lcftbhook.service.WarStateSync;
+import dev.malik.lcftbhook.teams.LandProperties;
 import net.minecraft.network.chat.Component;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerPlayer;
@@ -44,6 +47,7 @@ public class TeamPropertyHandler {
         FtbHookSavedData savedData = FtbHookSavedData.get(server);
         TeamPropertyCollection previous = event.getPreviousProperties();
         TeamPendingState pendingState = savedData.getPendingState(team.getTeamId());
+        ProtectionPricing.ChunkCounts counts = ProtectionPricing.countBillableChunks(server, team);
 
         ProtectionService.tryUnlock(server, team);
 
@@ -53,9 +57,9 @@ public class TeamPropertyHandler {
                     team.getShortName(), team.getProperty(FTBChunksProperties.CLAIM_VISIBILITY));
             ProtectionService.runReverting(() -> {
                 team.setProperty(FTBChunksProperties.CLAIM_VISIBILITY, PrivacyMode.PUBLIC);
-                team.syncOnePropertyToAll(server, FTBChunksProperties.CLAIM_VISIBILITY, PrivacyMode.PUBLIC);
+                team.syncOnePropertyToTeam(FTBChunksProperties.CLAIM_VISIBILITY, PrivacyMode.PUBLIC);
             });
-            notifyProtectionDenied(team, "message.lc_ftb_hook.claim_visibility_locked");
+            notifyTeam(team, "message.lc_ftb_hook.claim_visibility_locked");
         }
 
         for (TeamProperty<?> property : ProtectionPricing.PROTECTION_PROPERTIES) {
@@ -83,11 +87,8 @@ public class TeamPropertyHandler {
             LCFtbHook.LOGGER.info("[PendingDebug] Team {}: {} changed {} -> {}",
                     team.getShortName(), key, previousValue, newValue);
 
-            if (savedData.isProtectionLocked(team.getTeamId())) {
-                LCFtbHook.LOGGER.info("[PendingDebug] Team {}: protections locked, reverting {}",
-                        team.getShortName(), key);
-                revertProperty(server, team, previous, property);
-                notifyProtectionDenied(team, "message.lc_ftb_hook.protection_locked_change");
+            if (ProtectionRollbackService.isDismantled(team, property, pendingState)) {
+                pendingState = handleDismantledPropertyChange(server, team, property, pendingState, savedData, newValue);
                 continue;
             }
 
@@ -95,90 +96,57 @@ public class TeamPropertyHandler {
             String existingPending = pendingState.pendingProperties().get(key);
 
             if (existingPending != null) {
-                // A change for this property is already queued: further edits
-                // replace the queued value instead of being applied directly.
                 if (existingPending.equals(serializedNew)) {
+                    // Matches already-queued value — revert live display, keep pending.
                     LCFtbHook.LOGGER.info("[PendingDebug] Team {}: {} matches queued value {}, keeping pending",
                             team.getShortName(), key, existingPending);
                     revertProperty(server, team, previous, property);
                     continue;
                 }
 
-                // If the submitted value costs the same as the value that is
-                // currently active (e.g. Allies -> Private while a change to
-                // Public is queued), the change is cost-neutral: apply it
-                // immediately and drop the queued change.
+                // Replace queued value. Cost-neutral vs the active value → apply immediately.
                 TeamPendingState droppedState = pendingState.withoutPendingProperty(key);
-                long activePrice = ProtectionPricing.calculateBasePrice(previous, droppedState.pendingProperties());
-                long submittedPrice = ProtectionPricing.calculateBasePrice(
-                        previous, droppedState.withPendingProperty(key, serializedNew).pendingProperties());
+                long activePrice = ProtectionPricing.calculateProtectionCopper(previous, droppedState.pendingProperties(), counts);
+                long submittedPrice = ProtectionPricing.calculateProtectionCopper(
+                        previous, droppedState.withPendingProperty(key, serializedNew).pendingProperties(), counts);
                 if (activePrice == submittedPrice) {
                     pendingState = droppedState;
                     savedData.setPendingState(team.getTeamId(), pendingState);
-                    LCFtbHook.LOGGER.info("[PendingDebug] Team {}: {} = {} is cost-neutral vs active value, applied immediately, pending dropped; pending now: {}",
-                            team.getShortName(), key, serializedNew, pendingState.pendingProperties());
-                    if (!ProtectionService.canAffordNextPeriod(server, team, pendingState)) {
-                        revertProperty(server, team, previous, property);
-                        savedData.setProtectionLocked(team.getTeamId(), true);
-                        notifyProtectionDenied(team, "message.lc_ftb_hook.insufficient_funds_protection");
-                    }
+                    LCFtbHook.LOGGER.info("[PendingDebug] Team {}: {} cost-neutral vs active, applied immediately; pending now: {}",
+                            team.getShortName(), key, pendingState.pendingProperties());
                     continue;
                 }
 
-                TeamPendingState replacedState = pendingState.withPendingProperty(key, serializedNew);
-                if (!ProtectionService.canAffordNextPeriod(server, team, replacedState)) {
-                    LCFtbHook.LOGGER.info("[PendingDebug] Team {}: cannot afford replacement pending {}, reverting",
-                            team.getShortName(), key);
-                    revertProperty(server, team, previous, property);
-                    savedData.setProtectionLocked(team.getTeamId(), true);
-                    notifyProtectionDenied(team, "message.lc_ftb_hook.insufficient_funds_protection");
-                    continue;
-                }
-
-                pendingState = replacedState;
+                pendingState = pendingState.withPendingProperty(key, serializedNew);
                 savedData.setPendingState(team.getTeamId(), pendingState);
                 revertProperty(server, team, previous, property);
-                LCFtbHook.LOGGER.info("[PendingDebug] Team {}: {} pending value replaced {} -> {}; pending now: {}",
+                LCFtbHook.LOGGER.info("[PendingDebug] Team {}: {} pending replaced {} -> {}; pending now: {}",
                         team.getShortName(), key, existingPending, serializedNew, pendingState.pendingProperties());
                 notifyProtectionPending(team);
                 continue;
             }
 
-            TeamPendingState simulatedState = pendingState.withPendingProperty(key, serializedNew);
-
             // Prices must be calculated from the PREVIOUS property collection:
-            // when this event fires, the team already carries the new values,
+            // when this event fires the team already carries the new values,
             // so using the team would always yield oldPrice == newPrice.
-            long oldPrice = ProtectionPricing.calculateBasePrice(previous, pendingState.pendingProperties());
-            long newPrice = ProtectionPricing.calculateBasePrice(previous, simulatedState.pendingProperties());
+            TeamPendingState simulatedState = pendingState.withPendingProperty(key, serializedNew);
+            long oldPrice = ProtectionPricing.calculateProtectionCopper(previous, pendingState.pendingProperties(), counts);
+            long newPrice = ProtectionPricing.calculateProtectionCopper(previous, simulatedState.pendingProperties(), counts);
             LCFtbHook.LOGGER.info("[PendingDebug] Team {}: {} base price {} -> {}",
                     team.getShortName(), key, oldPrice, newPrice);
 
-            if (oldPrice == newPrice) {
-                TeamPendingState afterImmediate = simulatedState.withoutPendingProperty(key);
-                savedData.setPendingState(team.getTeamId(), afterImmediate);
-                if (!ProtectionService.canAffordNextPeriod(server, team, afterImmediate)) {
-                    LCFtbHook.LOGGER.info("[PendingDebug] Team {}: cannot afford next period, reverting {}",
-                            team.getShortName(), key);
-                    revertProperty(server, team, previous, property);
-                    savedData.setProtectionLocked(team.getTeamId(), true);
-                    notifyProtectionDenied(team, "message.lc_ftb_hook.insufficient_funds_protection");
-                } else {
-                    LCFtbHook.LOGGER.info("[PendingDebug] Team {}: {} applied immediately (price unchanged)",
-                            team.getShortName(), key);
-                }
-                continue;
-            }
-
-            if (!ProtectionService.canAffordNextPeriod(server, team, simulatedState)) {
-                LCFtbHook.LOGGER.info("[PendingDebug] Team {}: cannot afford {} with pending change, reverting",
+            if (oldPrice == newPrice && !shouldQueueProtectionPendingWhenTotalUnchanged(
+                    property, previous, pendingState, simulatedState)) {
+                // Cost-neutral change — apply immediately without queuing.
+                savedData.setPendingState(team.getTeamId(), pendingState);
+                LCFtbHook.LOGGER.info("[PendingDebug] Team {}: {} applied immediately (price unchanged)",
                         team.getShortName(), key);
-                revertProperty(server, team, previous, property);
-                savedData.setProtectionLocked(team.getTeamId(), true);
-                notifyProtectionDenied(team, "message.lc_ftb_hook.insufficient_funds_protection");
                 continue;
             }
 
+            // Cost-increasing or base-price-changing: queue for next upkeep period.
+            // No affordability check — the upkeep tick handles payment; if the
+            // team cannot afford it the change stays pending until they can.
             pendingState = simulatedState;
             savedData.setPendingState(team.getTeamId(), pendingState);
             revertProperty(server, team, previous, property);
@@ -188,6 +156,56 @@ public class TeamPropertyHandler {
         }
 
         PendingStateSync.syncTeam(server, team);
+        WarStateSync.onUpkeepFactorsChanged(server, team);
+    }
+
+    private static TeamPendingState handleDismantledPropertyChange(
+            MinecraftServer server,
+            Team team,
+            TeamProperty<?> property,
+            TeamPendingState pendingState,
+            FtbHookSavedData savedData,
+            Object newValue
+    ) {
+        String key = ProtectionPricing.propertyKey(property);
+        String serializedNew = ProtectionPricing.serializePropertyValue(property, newValue);
+        ProtectionService.runReverting(() -> ProtectionRollbackService.revertLiveToMinimum(team, property));
+
+        TeamPendingState updated;
+        if (ProtectionRollbackService.isSerializedMinimum(property, serializedNew)) {
+            updated = pendingState.withoutPendingProperty(key);
+            if (pendingState.hasPendingProperty(key)) {
+                notifyTeam(team, "message.lc_ftb_hook.protection_pending_cancelled");
+            }
+        } else {
+            updated = pendingState.withPendingProperty(key, serializedNew);
+            notifyProtectionPending(team);
+        }
+        savedData.setPendingState(team.getTeamId(), updated);
+        LCFtbHook.LOGGER.info("[PendingDebug] Team {}: dismantled {} pending updated to {}; pending now: {}",
+                team.getShortName(), key, serializedNew, updated.pendingProperties());
+        return updated;
+    }
+
+    /**
+     * Protection changes can alter the per-chunk base price while total upkeep
+     * stays flat (no billable chunks yet, or only free chunks). Queue those
+     * changes so they apply at the next upkeep period and the UI shows pending.
+     */
+    private static boolean shouldQueueProtectionPendingWhenTotalUnchanged(
+            TeamProperty<?> property,
+            TeamPropertyCollection previous,
+            TeamPendingState pendingState,
+            TeamPendingState simulatedState
+    ) {
+        if (LandProperties.isLandProperty(property)) {
+            long oldBase = ProtectionPricing.calculateLandBasePrice(previous, pendingState.pendingProperties());
+            long newBase = ProtectionPricing.calculateLandBasePrice(previous, simulatedState.pendingProperties());
+            return oldBase != newBase;
+        }
+        long oldBase = ProtectionPricing.calculateBuildBasePrice(previous, pendingState.pendingProperties());
+        long newBase = ProtectionPricing.calculateBuildBasePrice(previous, simulatedState.pendingProperties());
+        return oldBase != newBase;
     }
 
     private static <T> boolean hasPropertyChanged(TeamPropertyCollection previous, Team team, TeamProperty<T> property) {
@@ -198,16 +216,15 @@ public class TeamPropertyHandler {
         T value = previous.get(property);
         ProtectionService.runReverting(() -> {
             team.setProperty(property, value);
-            // setProperty alone does not sync to clients, so without this the
-            // client UI keeps showing the value we just reverted.
-            team.syncOnePropertyToAll(server, property, value);
+            // setProperty alone does not sync to clients, and
+            // syncOnePropertyToAll is a no-op for protection properties (not
+            // flagged shouldSyncToAll). syncOnePropertyToTeam reliably pushes
+            // the reverted (active) value to all online team members so the
+            // client cache always matches the server's active value.
+            team.syncOnePropertyToTeam(property, value);
         });
-        LCFtbHook.LOGGER.info("[PendingDebug] Team {}: reverted {} to {} (synced to clients)",
+        LCFtbHook.LOGGER.info("[PendingDebug] Team {}: reverted {} to {} (synced to team)",
                 team.getShortName(), ProtectionPricing.propertyKey(property), value);
-    }
-
-    private static void notifyProtectionDenied(Team team, String messageKey) {
-        notifyTeam(team, messageKey);
     }
 
     private static void notifyProtectionPending(Team team) {

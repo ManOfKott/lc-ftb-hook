@@ -25,6 +25,23 @@ def applyDevServerConfig = tasks.register('applyDevServerConfig', Exec) {
     commandLine 'powershell.exe', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', 'scripts/Apply-DevServerConfig.ps1'
 }
 
+def applyDevClientConfig = tasks.register('applyDevClientConfig', Exec) {
+    group = 'neoforge'
+    description = 'Sets dev client window to bordered fullscreen (windowed, screen size)'
+    workingDir layout.projectDirectory.asFile
+    commandLine 'powershell.exe', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', 'scripts/Apply-DevClientConfig.ps1'
+}
+
+def devClientWidth = findProperty('devClientWidth') ?: '1920'
+def devClientHeight = findProperty('devClientHeight') ?: '1080'
+def devClientWindowFile = layout.projectDirectory.file('scripts/dev/client-window.properties').asFile
+if (devClientWindowFile.exists()) {
+    def windowProps = new Properties()
+    devClientWindowFile.withInputStream { windowProps.load(it) }
+    devClientWidth = windowProps.getProperty('width', devClientWidth)
+    devClientHeight = windowProps.getProperty('height', devClientHeight)
+}
+
 neoForge {
     version = project.neo_version
 
@@ -38,8 +55,16 @@ neoForge {
             client()
             ideName = 'Client 1'
             systemProperty 'neoforge.enabledGameTestNamespaces', project.mod_id
+            // "neoforge-" in the default ignoreList also matches Xaero jars like
+            // xaeros-minimap-neoforge-1.21.1-*.jar — narrow it to "neoforge-21."
+            // so only the actual NeoForge runtime jars are skipped.
+            jvmArgument '-DignoreList=mixinextras-neoforge-0.5.3.jar,client-extra,neoforge-21.'
             programArgument '--username'
             programArgument 'Dev'
+            programArgument '--width'
+            programArgument devClientWidth
+            programArgument '--height'
+            programArgument devClientHeight
         }
 
         client2 {
@@ -47,15 +72,23 @@ neoForge {
             ideName = 'Client 2'
             gameDirectory = project.layout.projectDirectory.dir('run-client2')
             systemProperty 'neoforge.enabledGameTestNamespaces', project.mod_id
+            jvmArgument '-DignoreList=mixinextras-neoforge-0.5.3.jar,client-extra,neoforge-21.'
             programArgument '--username'
             programArgument 'DevPlayer2'
+            programArgument '--width'
+            programArgument devClientWidth
+            programArgument '--height'
+            programArgument devClientHeight
         }
 
         server {
             server()
             programArgument '--nogui'
             systemProperty 'neoforge.enabledGameTestNamespaces', project.mod_id
-            taskBefore applyDevServerConfig
+            // NOTE: dev server config is applied in-process by scripts/run-server.ps1
+            // before Gradle starts. We intentionally do NOT wire applyDevServerConfig
+            // as taskBefore here: spawning a fresh powershell.exe from the Gradle Exec
+            // task can hang on Windows, which blocked :runServer from ever starting.
         }
     }
 
@@ -110,6 +143,18 @@ dependencies {
 
     compileOnly "maven.modrinth:lightmans-currency:${lightmanscurrency_version}"
     localRuntime "maven.modrinth:lightmans-currency:${lightmanscurrency_version}"
+
+    // Client-only test-client mods: Xaero's Minimap + World Map and the
+    // FTB Chunks compat addon that renders FTB Chunks claims on Xaero's maps.
+    // Added to the per-run additional runtime classpath of the client runs only,
+    // so they never load on the dedicated server (they are client-side mods).
+    clientAdditionalRuntimeClasspath "maven.modrinth:xaeros-minimap:${xaeros_minimap_version}"
+    clientAdditionalRuntimeClasspath "maven.modrinth:xaeros-world-map:${xaeros_worldmap_version}"
+    clientAdditionalRuntimeClasspath "curse.maven:ftb-chunks-x-xaeros-compat-${ftb_xaero_compat_project}:${ftb_xaero_compat_file}"
+
+    client2AdditionalRuntimeClasspath "maven.modrinth:xaeros-minimap:${xaeros_minimap_version}"
+    client2AdditionalRuntimeClasspath "maven.modrinth:xaeros-world-map:${xaeros_worldmap_version}"
+    client2AdditionalRuntimeClasspath "curse.maven:ftb-chunks-x-xaeros-compat-${ftb_xaero_compat_project}:${ftb_xaero_compat_file}"
 }
 
 var generateModMetadata = tasks.register('generateModMetadata', ProcessResources) {
@@ -135,6 +180,15 @@ var generateModMetadata = tasks.register('generateModMetadata', ProcessResources
 
 sourceSets.main.resources.srcDir generateModMetadata
 neoForge.ideSyncTask generateModMetadata
+
+dependencies {
+    testImplementation 'org.junit.jupiter:junit-jupiter:5.10.1'
+    testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+}
+
+test {
+    useJUnitPlatform()
+}
 
 tasks.withType(JavaCompile).configureEach {
     options.encoding = 'UTF-8'

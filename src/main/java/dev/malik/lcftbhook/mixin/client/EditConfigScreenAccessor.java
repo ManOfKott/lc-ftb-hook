@@ -8,4 +8,7 @@ import org.spongepowered.asm.mixin.gen.Accessor;
 public interface EditConfigScreenAccessor {
     @Accessor(value = "group", remap = false)
     ConfigGroup lcFtbHook$getGroup();
+
+    @Accessor(value = "changed", remap = false)
+    boolean lcFtbHook$getChanged();
 }

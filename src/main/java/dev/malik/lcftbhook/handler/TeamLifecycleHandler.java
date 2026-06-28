@@ -8,22 +8,24 @@ import dev.ftb.mods.ftbteams.api.event.PlayerLoggedInAfterTeamEvent;
 import dev.ftb.mods.ftbteams.api.event.PlayerTransferredTeamOwnershipEvent;
 import dev.ftb.mods.ftbteams.api.event.TeamCreatedEvent;
 import dev.ftb.mods.ftbteams.api.event.TeamEvent;
-import dev.ftb.mods.ftbteams.api.event.TeamManagerEvent;
 import dev.malik.lcftbhook.bank.BankAccountHelper;
 import dev.malik.lcftbhook.service.ClaimPriceSync;
 import dev.malik.lcftbhook.service.ClaimVisibilityService;
 import dev.malik.lcftbhook.service.PartyDisbandSettlementService;
+import dev.malik.lcftbhook.service.TeamDeletionService;
 import dev.malik.lcftbhook.network.PendingStateSync;
+import dev.malik.lcftbhook.service.WarStateSync;
+import dev.malik.lcftbhook.teams.FtbTeamCatalog;
 import dev.malik.lcftbhook.teams.LcTeamSyncService;
 import dev.malik.lcftbhook.teams.TeamLinkRegistry;
 import net.minecraft.server.MinecraftServer;
+import net.minecraft.server.level.ServerPlayer;
 import net.neoforged.bus.api.SubscribeEvent;
 import net.neoforged.neoforge.event.server.ServerStartedEvent;
 import net.neoforged.neoforge.server.ServerLifecycleHooks;
 
 public class TeamLifecycleHandler {
     public TeamLifecycleHandler() {
-        TeamManagerEvent.CREATED.register(this::onTeamManagerCreated);
         TeamEvent.CREATED.register(this::onTeamCreated);
         TeamEvent.LOADED.register(this::onTeamLoaded);
         TeamEvent.DELETED.register(this::onTeamDeleted);
@@ -39,13 +41,6 @@ public class TeamLifecycleHandler {
         reconcileTeams(event.getServer());
     }
 
-    private void onTeamManagerCreated(TeamManagerEvent event) {
-        MinecraftServer server = ServerLifecycleHooks.getCurrentServer();
-        if (server != null) {
-            reconcileTeams(server);
-        }
-    }
-
     private void onTeamCreated(TeamCreatedEvent event) {
         ClaimVisibilityService.ensurePublic(event.getTeam());
         ensureAccount(event.getTeam());
@@ -59,7 +54,7 @@ public class TeamLifecycleHandler {
     private void onTeamDeleted(TeamEvent event) {
         MinecraftServer server = ServerLifecycleHooks.getCurrentServer();
         if (server != null) {
-            LcTeamSyncService.onTeamDeleted(server, event.getTeam());
+            TeamDeletionService.purge(server, event.getTeam());
         }
     }
 
@@ -71,6 +66,9 @@ public class TeamLifecycleHandler {
         MinecraftServer server = ServerLifecycleHooks.getCurrentServer();
         if (server != null && event.getTeamDeleted()) {
             PartyDisbandSettlementService.settle(server, event.getTeam());
+            if (event.getPlayer() != null) {
+                WarStateSync.syncToPlayer(event.getPlayer());
+            }
         }
 
         if (!event.getTeamDeleted()) {
@@ -95,8 +93,14 @@ public class TeamLifecycleHandler {
         }
         ensureAccount(event.getTeam());
         if (event.getPlayer() != null) {
-            ClaimPriceSync.syncToPlayer(event.getPlayer());
-            PendingStateSync.syncToPlayer(event.getPlayer());
+            ServerPlayer player = event.getPlayer();
+            ClaimPriceSync.syncToPlayer(player);
+            PendingStateSync.syncToPlayer(player);
+            dev.malik.lcftbhook.service.LandChunkService.syncToPlayer(player);
+            WarStateSync.syncToPlayer(player);
+            // Defer once: login sync can race the client's play handler registration
+            // after a full server restart + reconnect.
+            server.execute(() -> dev.malik.lcftbhook.service.LandChunkService.syncToPlayer(player));
         }
     }
 

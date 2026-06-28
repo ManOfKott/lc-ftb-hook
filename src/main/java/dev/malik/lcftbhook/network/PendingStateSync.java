@@ -46,7 +46,9 @@ public final class PendingStateSync {
         return new SyncPendingStatePayload(
                 pendingState.pendingProperties(),
                 pendingState.pendingForceLoads(),
-                pendingState.pendingForceUnloads()
+                pendingState.pendingForceUnloads(),
+                pendingState.pendingLandChunks(),
+                pendingState.pendingBuildChunks()
         );
     }
 }

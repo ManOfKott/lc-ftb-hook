@@ -35,7 +35,10 @@ public class ChunkClaimHandler {
 
     private void afterClaim(CommandSourceStack source, ClaimedChunk chunk) {
         if (ClaimBatchContext.isExecuting()) {
-            ClaimBatchContext.markUiSyncNeeded();
+            int countBeforeClaim = chunk.getTeamData().getClaimedChunks().size() - 1;
+            if (FreeChunkAllowance.isClaimFree(countBeforeClaim)) {
+                ClaimBatchContext.recordClaimFree();
+            }
             return;
         }
         syncClaimUi(source);
@@ -50,42 +53,27 @@ public class ChunkClaimHandler {
     }
 
     private void afterUnclaim(CommandSourceStack source, ClaimedChunk chunk) {
-        int countBeforeUnclaim = chunk.getTeamData().getClaimedChunks().size() + 1;
-        if (!FreeChunkAllowance.shouldRefundOnUnclaim(countBeforeUnclaim)) {
-            if (!ClaimBatchContext.isExecuting() && !ClaimBatchContext.suppressNotifications()) {
-                syncClaimUi(source);
-            }
-            return;
+        MinecraftServer unclaimServer = source.getServer();
+        if (unclaimServer != null) {
+            dev.malik.lcftbhook.service.LandChunkService.onChunkUnclaimed(unclaimServer, chunk);
         }
 
-        long claimPrice = LCFtbHookConfig.SERVER.claimPrice.get();
-        double refundRatio = LCFtbHookConfig.SERVER.unclaimRefundRatio.get();
-        if (claimPrice <= 0 || refundRatio <= 0) {
-            if (!ClaimBatchContext.isExecuting()) {
-                syncClaimUi(source);
-            }
-            return;
-        }
-
-        long refundAmount = (long) Math.floor(claimPrice * refundRatio);
+        long refundAmount = calculateUnclaimRefund(chunk);
         if (refundAmount <= 0) {
-            if (!ClaimBatchContext.isExecuting()) {
+            if (ClaimBatchContext.isExecuting()) {
+                ClaimBatchContext.recordUnclaim(0);
+            } else if (!ClaimBatchContext.suppressNotifications()) {
                 syncClaimUi(source);
             }
             return;
         }
 
         Team team = chunk.getTeamData().getTeam();
-        if (team == null) {
-            if (!ClaimBatchContext.isExecuting()) {
-                syncClaimUi(source);
-            }
-            return;
-        }
-
         MinecraftServer server = source.getServer();
-        if (server == null) {
-            if (!ClaimBatchContext.isExecuting()) {
+        if (team == null || server == null) {
+            if (ClaimBatchContext.isExecuting()) {
+                ClaimBatchContext.recordUnclaim(0);
+            } else if (!ClaimBatchContext.suppressNotifications()) {
                 syncClaimUi(source);
             }
             return;
@@ -99,6 +87,9 @@ public class ChunkClaimHandler {
             account = PlayerBankReference.of(personalRefundPlayer).get();
             if (account == null) {
                 LCFtbHook.LOGGER.warn("Missing personal bank account for refund on party join: {}", personalRefundPlayer);
+                if (ClaimBatchContext.isExecuting()) {
+                    ClaimBatchContext.recordUnclaim(0);
+                }
                 return;
             }
         } else {
@@ -109,10 +100,15 @@ public class ChunkClaimHandler {
         ServerPlayer player = source.getPlayer();
         if (player != null) {
             if (ClaimBatchContext.isExecuting()) {
-                ClaimBatchContext.recordUnclaimRefund(refundAmount);
+                ClaimBatchContext.recordUnclaim(refundAmount);
             } else if (!ClaimBatchContext.suppressNotifications()) {
+                int refundPercent = (int) Math.round(LCFtbHookConfig.SERVER.unclaimRefundRatio.get() * 100.0D);
                 player.displayClientMessage(
-                        Component.translatable("message.lc_ftb_hook.unclaim_refund", MoneyMessageUtil.formatValue(refund)),
+                        Component.translatable(
+                                "message.lc_ftb_hook.unclaim_refund",
+                                MoneyMessageUtil.formatValue(refund),
+                                refundPercent
+                        ),
                         false
                 );
                 syncClaimUi(source);
@@ -120,6 +116,21 @@ public class ChunkClaimHandler {
             return;
         }
         syncClaimUi(source);
+    }
+
+    private long calculateUnclaimRefund(ClaimedChunk chunk) {
+        int countBeforeUnclaim = chunk.getTeamData().getClaimedChunks().size() + 1;
+        if (!FreeChunkAllowance.shouldRefundOnUnclaim(countBeforeUnclaim)) {
+            return 0L;
+        }
+
+        long claimPrice = LCFtbHookConfig.SERVER.claimPrice.get();
+        double refundRatio = LCFtbHookConfig.SERVER.unclaimRefundRatio.get();
+        if (claimPrice <= 0 || refundRatio <= 0) {
+            return 0L;
+        }
+
+        return (long) Math.floor(claimPrice * refundRatio);
     }
 
     private void syncClaimUi(CommandSourceStack source) {
@@ -170,6 +181,21 @@ public class ChunkClaimHandler {
         }
 
         account.withdrawMoney(price);
+        if (ClaimBatchContext.isExecuting()) {
+            ClaimBatchContext.recordClaimSpend(priceAmount);
+        } else {
+            ServerPlayer payingPlayer = source.getPlayer();
+            if (payingPlayer != null) {
+                payingPlayer.displayClientMessage(
+                        Component.translatable(
+                                "message.lc_ftb_hook.claim_paid",
+                                MoneyMessageUtil.formatValue(price)
+                        ),
+                        false
+                );
+                ClaimPriceSync.syncToPlayer(payingPlayer);
+            }
+        }
         return CompoundEventResult.pass();
     }
 }

@@ -43,7 +43,21 @@ public class FtbHookSavedData extends SavedData {
             }
             boolean locked = entryTag.getBoolean("ProtectionLocked");
             TeamPendingState pending = loadPendingState(entryTag);
-            data.teamLinks.put(teamId, new TeamLinkEntry(teamId, lcTeamId, legacyAccount, locked, pending));
+            Set<String> landChunks = new HashSet<>();
+            if (entryTag.contains("LandChunks", Tag.TAG_LIST)) {
+                ListTag landList = entryTag.getList("LandChunks", Tag.TAG_STRING);
+                for (int j = 0; j < landList.size(); j++) {
+                    landChunks.add(landList.getString(j));
+                }
+            }
+            Set<UUID> warTargets = new HashSet<>();
+            if (entryTag.contains("WarTargets", Tag.TAG_LIST)) {
+                ListTag warList = entryTag.getList("WarTargets", Tag.TAG_INT_ARRAY);
+                for (int j = 0; j < warList.size(); j++) {
+                    warTargets.add(net.minecraft.nbt.NbtUtils.loadUUID(warList.get(j)));
+                }
+            }
+            data.teamLinks.put(teamId, new TeamLinkEntry(teamId, lcTeamId, legacyAccount, locked, pending, landChunks, warTargets));
         }
         return data;
     }
@@ -73,7 +87,54 @@ public class FtbHookSavedData extends SavedData {
             }
         }
 
-        return new TeamPendingState(pendingProperties, pendingLoads, pendingUnloads);
+        Set<UUID> pendingWarDeclares = new HashSet<>();
+        if (entryTag.contains("PendingWarDeclares", Tag.TAG_LIST)) {
+            ListTag declares = entryTag.getList("PendingWarDeclares", Tag.TAG_INT_ARRAY);
+            for (int i = 0; i < declares.size(); i++) {
+                pendingWarDeclares.add(net.minecraft.nbt.NbtUtils.loadUUID(declares.get(i)));
+            }
+        }
+
+        Set<UUID> pendingWarEnds = new HashSet<>();
+        if (entryTag.contains("PendingWarEnds", Tag.TAG_LIST)) {
+            ListTag ends = entryTag.getList("PendingWarEnds", Tag.TAG_INT_ARRAY);
+            for (int i = 0; i < ends.size(); i++) {
+                pendingWarEnds.add(net.minecraft.nbt.NbtUtils.loadUUID(ends.get(i)));
+            }
+        }
+
+        Set<String> pendingLandChunks = new HashSet<>();
+        if (entryTag.contains("PendingLandChunks", Tag.TAG_LIST)) {
+            ListTag landPending = entryTag.getList("PendingLandChunks", Tag.TAG_STRING);
+            for (int i = 0; i < landPending.size(); i++) {
+                pendingLandChunks.add(landPending.getString(i));
+            }
+        }
+
+        Set<String> pendingBuildChunks = new HashSet<>();
+        if (entryTag.contains("PendingBuildChunks", Tag.TAG_LIST)) {
+            ListTag buildPending = entryTag.getList("PendingBuildChunks", Tag.TAG_STRING);
+            for (int i = 0; i < buildPending.size(); i++) {
+                pendingBuildChunks.add(buildPending.getString(i));
+            }
+        }
+
+        if (entryTag.contains("AutoSuspendedWars", Tag.TAG_LIST)) {
+            ListTag suspendedWars = entryTag.getList("AutoSuspendedWars", Tag.TAG_INT_ARRAY);
+            for (int i = 0; i < suspendedWars.size(); i++) {
+                pendingWarDeclares.add(net.minecraft.nbt.NbtUtils.loadUUID(suspendedWars.get(i)));
+            }
+        }
+
+        return new TeamPendingState(
+                pendingProperties,
+                pendingLoads,
+                pendingUnloads,
+                pendingLandChunks,
+                pendingBuildChunks,
+                pendingWarDeclares,
+                pendingWarEnds
+        );
     }
 
     @Override
@@ -90,6 +151,16 @@ public class FtbHookSavedData extends SavedData {
             }
             entryTag.putBoolean("ProtectionLocked", entry.protectionLocked());
             savePendingState(entryTag, entry.pendingState());
+            if (!entry.landChunks().isEmpty()) {
+                ListTag landList = new ListTag();
+                entry.landChunks().forEach(key -> landList.add(StringTag.valueOf(key)));
+                entryTag.put("LandChunks", landList);
+            }
+            if (!entry.warTargets().isEmpty()) {
+                ListTag warList = new ListTag();
+                entry.warTargets().forEach(id -> warList.add(net.minecraft.nbt.NbtUtils.createUUID(id)));
+                entryTag.put("WarTargets", warList);
+            }
             list.add(entryTag);
         }
         tag.put("Teams", list);
@@ -112,12 +183,32 @@ public class FtbHookSavedData extends SavedData {
             pendingState.pendingForceUnloads().forEach(key -> unloads.add(StringTag.valueOf(key)));
             entryTag.put("PendingForceUnloads", unloads);
         }
+        if (!pendingState.pendingLandChunks().isEmpty()) {
+            ListTag landPending = new ListTag();
+            pendingState.pendingLandChunks().forEach(key -> landPending.add(StringTag.valueOf(key)));
+            entryTag.put("PendingLandChunks", landPending);
+        }
+        if (!pendingState.pendingBuildChunks().isEmpty()) {
+            ListTag buildPending = new ListTag();
+            pendingState.pendingBuildChunks().forEach(key -> buildPending.add(StringTag.valueOf(key)));
+            entryTag.put("PendingBuildChunks", buildPending);
+        }
+        if (!pendingState.pendingWarDeclares().isEmpty()) {
+            ListTag declares = new ListTag();
+            pendingState.pendingWarDeclares().forEach(id -> declares.add(net.minecraft.nbt.NbtUtils.createUUID(id)));
+            entryTag.put("PendingWarDeclares", declares);
+        }
+        if (!pendingState.pendingWarEnds().isEmpty()) {
+            ListTag ends = new ListTag();
+            pendingState.pendingWarEnds().forEach(id -> ends.add(net.minecraft.nbt.NbtUtils.createUUID(id)));
+            entryTag.put("PendingWarEnds", ends);
+        }
     }
 
     public TeamLinkEntry getOrCreateLink(UUID ftbTeamId) {
         return teamLinks.computeIfAbsent(ftbTeamId, id -> {
             setDirty();
-            return new TeamLinkEntry(id, -1L, null, false, new TeamPendingState());
+            return new TeamLinkEntry(id, -1L, null, false, new TeamPendingState(), Set.of(), Set.of());
         });
     }
 
@@ -150,6 +241,17 @@ public class FtbHookSavedData extends SavedData {
             setDirty();
         }
         return removed;
+    }
+
+    /** Clears the LC bank link only; keeps land chunks, pending state, and protection lock. */
+    public boolean clearLcTeamLink(UUID ftbTeamId) {
+        TeamLinkEntry entry = teamLinks.get(ftbTeamId);
+        if (entry == null || (entry.lcTeamId() <= 0 && entry.legacyAccount() == null)) {
+            return false;
+        }
+        teamLinks.put(ftbTeamId, entry.withLcTeamId(-1L).withLegacyAccount(null));
+        setDirty();
+        return true;
     }
 
     public void removeLinkByLcTeamId(long lcTeamId) {
@@ -192,9 +294,63 @@ public class FtbHookSavedData extends SavedData {
             teamLinks.put(teamId, entry.withProtectionLocked(locked));
             setDirty();
         } else if (entry == null && locked) {
-            teamLinks.put(teamId, new TeamLinkEntry(teamId, -1L, null, true, new TeamPendingState()));
+            teamLinks.put(teamId, new TeamLinkEntry(teamId, -1L, null, true, new TeamPendingState(), Set.of(), Set.of()));
             setDirty();
         }
+    }
+
+    public Set<String> getLandChunks(UUID teamId) {
+        TeamLinkEntry entry = teamLinks.get(teamId);
+        return entry == null ? Set.of() : entry.landChunks();
+    }
+
+    public boolean isLandChunk(UUID teamId, String chunkKey) {
+        return getLandChunks(teamId).contains(chunkKey);
+    }
+
+    /**
+     * Marks or unmarks a chunk as land chunk. Returns true if the stored
+     * state actually changed.
+     */
+    public boolean setLandChunk(UUID teamId, String chunkKey, boolean land) {
+        TeamLinkEntry entry = getOrCreateLink(teamId);
+        if (entry.landChunks().contains(chunkKey) == land) {
+            return false;
+        }
+        Set<String> updated = new HashSet<>(entry.landChunks());
+        if (land) {
+            updated.add(chunkKey);
+        } else {
+            updated.remove(chunkKey);
+        }
+        teamLinks.put(teamId, entry.withLandChunks(updated));
+        setDirty();
+        return true;
+    }
+
+    /** Removes a chunk from every team's land set (e.g. after unclaiming). */
+    public boolean clearLandChunk(String chunkKey) {
+        boolean changed = false;
+        for (TeamLinkEntry entry : java.util.List.copyOf(teamLinks.values())) {
+            if (entry.landChunks().contains(chunkKey)) {
+                Set<String> updated = new HashSet<>(entry.landChunks());
+                updated.remove(chunkKey);
+                teamLinks.put(entry.ftbTeamId(), entry.withLandChunks(updated));
+                changed = true;
+            }
+        }
+        if (changed) {
+            setDirty();
+        }
+        return changed;
+    }
+
+    public Set<String> getAllLandChunks() {
+        Set<String> all = new HashSet<>();
+        for (TeamLinkEntry entry : teamLinks.values()) {
+            all.addAll(entry.landChunks());
+        }
+        return all;
     }
 
     public boolean isProtectionLocked(UUID teamId) {
@@ -224,27 +380,110 @@ public class FtbHookSavedData extends SavedData {
         return linkedIds;
     }
 
+    public Set<UUID> getWarTargets(UUID teamId) {
+        TeamLinkEntry entry = teamLinks.get(teamId);
+        return entry == null ? Set.of() : entry.warTargets();
+    }
+
+    public boolean isAtWarWith(UUID declarerTeamId, UUID targetTeamId) {
+        return getWarTargets(declarerTeamId).contains(targetTeamId);
+    }
+
+    public boolean setWarTarget(UUID declarerTeamId, UUID targetTeamId, boolean atWar) {
+        TeamLinkEntry entry = getOrCreateLink(declarerTeamId);
+        Set<UUID> updated = new HashSet<>(entry.warTargets());
+        if (atWar) {
+            if (!updated.add(targetTeamId)) {
+                return false;
+            }
+        } else if (!updated.remove(targetTeamId)) {
+            return false;
+        }
+        teamLinks.put(declarerTeamId, entry.withWarTargets(Set.copyOf(updated)));
+        setDirty();
+        return true;
+    }
+
+    public Set<UUID> collectWarPartnerIds(UUID teamId) {
+        Set<UUID> partners = new HashSet<>();
+        partners.addAll(getWarTargets(teamId));
+        for (TeamLinkEntry entry : teamLinks.values()) {
+            if (entry.warTargets().contains(teamId)) {
+                partners.add(entry.ftbTeamId());
+            }
+        }
+        partners.remove(teamId);
+        return partners;
+    }
+
+    public void clearWarReferences(UUID teamId) {
+        boolean changed = false;
+        TeamLinkEntry ownEntry = teamLinks.get(teamId);
+        if (ownEntry != null && !ownEntry.warTargets().isEmpty()) {
+            teamLinks.put(teamId, ownEntry.withWarTargets(Set.of()));
+            changed = true;
+        }
+        for (TeamLinkEntry entry : java.util.List.copyOf(teamLinks.values())) {
+            UUID entryTeamId = entry.ftbTeamId();
+            TeamPendingState pending = entry.pendingState();
+            TeamPendingState cleaned = pending.withoutWarReferences(teamId);
+            if (cleaned != pending) {
+                teamLinks.put(entryTeamId, entry.withPendingState(cleaned));
+                changed = true;
+            }
+            if (entry.warTargets().contains(teamId)) {
+                Set<UUID> updated = new HashSet<>(entry.warTargets());
+                updated.remove(teamId);
+                teamLinks.put(entryTeamId, teamLinks.get(entryTeamId).withWarTargets(Set.copyOf(updated)));
+                changed = true;
+            }
+        }
+        if (changed) {
+            setDirty();
+        }
+    }
+
+    public int countIncomingWars(UUID targetTeamId) {
+        int count = 0;
+        for (TeamLinkEntry entry : teamLinks.values()) {
+            if (entry.warTargets().contains(targetTeamId)) {
+                count++;
+            }
+        }
+        return count;
+    }
+
     public record TeamLinkEntry(
             UUID ftbTeamId,
             long lcTeamId,
             @Nullable BankAccount legacyAccount,
             boolean protectionLocked,
-            TeamPendingState pendingState
+            TeamPendingState pendingState,
+            Set<String> landChunks,
+            Set<UUID> warTargets
     ) {
         TeamLinkEntry withLcTeamId(long id) {
-            return new TeamLinkEntry(ftbTeamId, id, legacyAccount, protectionLocked, pendingState);
+            return new TeamLinkEntry(ftbTeamId, id, legacyAccount, protectionLocked, pendingState, landChunks, warTargets);
         }
 
         TeamLinkEntry withLegacyAccount(@Nullable BankAccount account) {
-            return new TeamLinkEntry(ftbTeamId, lcTeamId, account, protectionLocked, pendingState);
+            return new TeamLinkEntry(ftbTeamId, lcTeamId, account, protectionLocked, pendingState, landChunks, warTargets);
         }
 
         TeamLinkEntry withProtectionLocked(boolean locked) {
-            return new TeamLinkEntry(ftbTeamId, lcTeamId, legacyAccount, locked, pendingState);
+            return new TeamLinkEntry(ftbTeamId, lcTeamId, legacyAccount, locked, pendingState, landChunks, warTargets);
         }
 
         TeamLinkEntry withPendingState(TeamPendingState pending) {
-            return new TeamLinkEntry(ftbTeamId, lcTeamId, legacyAccount, protectionLocked, pending);
+            return new TeamLinkEntry(ftbTeamId, lcTeamId, legacyAccount, protectionLocked, pending, landChunks, warTargets);
+        }
+
+        TeamLinkEntry withLandChunks(Set<String> chunks) {
+            return new TeamLinkEntry(ftbTeamId, lcTeamId, legacyAccount, protectionLocked, pendingState, chunks, warTargets);
+        }
+
+        TeamLinkEntry withWarTargets(Set<UUID> targets) {
+            return new TeamLinkEntry(ftbTeamId, lcTeamId, legacyAccount, protectionLocked, pendingState, landChunks, targets);
         }
     }
 }

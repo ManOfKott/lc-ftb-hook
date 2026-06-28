@@ -6,6 +6,7 @@ import dev.ftb.mods.ftbteams.api.Team;
 import dev.malik.lcftbhook.bank.BankAccountHelper;
 import dev.malik.lcftbhook.config.LCFtbHookConfig;
 import dev.malik.lcftbhook.network.SyncClaimPricesPayload;
+import dev.malik.lcftbhook.service.WarService;
 import io.github.lightman314.lightmanscurrency.api.money.bank.IBankAccount;
 import net.minecraft.server.level.ServerPlayer;
 import net.neoforged.neoforge.network.PacketDistributor;
@@ -54,7 +55,9 @@ public final class ClaimPriceSync {
                 LCFtbHookConfig.SERVER.pvpDisablePrice.get(),
                 LCFtbHookConfig.SERVER.blockInteractProtectionPrice.get(),
                 LCFtbHookConfig.SERVER.blockEditProtectionPrice.get(),
-                LCFtbHookConfig.SERVER.entityInteractProtectionPrice.get()
+                LCFtbHookConfig.SERVER.entityInteractProtectionPrice.get(),
+                ProtectionPricing.landChunkGroupSize(),
+                WarService.isEnabled()
         );
     }
 }

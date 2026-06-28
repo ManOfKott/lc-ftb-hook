@@ -1,9 +1,12 @@
 package dev.malik.lcftbhook.mixin.client;
 
+import dev.ftb.mods.ftblibrary.config.ui.EditConfigScreen;
+import dev.malik.lcftbhook.client.EditConfigScreenUiHelper;
+import dev.malik.lcftbhook.client.PendingStateUiRefresh;
 import dev.malik.lcftbhook.network.RequestClaimPricesPayload;
+import dev.malik.lcftbhook.network.RequestLandChunksPayload;
 import dev.malik.lcftbhook.network.RequestPendingStatePayload;
-import dev.malik.lcftbhook.service.ProtectionPriceDisplay;
-import net.minecraft.ChatFormatting;
+import dev.malik.lcftbhook.network.RequestWarStatePayload;
 import net.minecraft.network.chat.Component;
 import net.neoforged.neoforge.network.PacketDistributor;
 import org.spongepowered.asm.mixin.Final;
@@ -33,6 +36,12 @@ public class EditConfigScreenMixin {
         if (Boolean.TRUE.equals(callback.getReturnValue())) {
             PacketDistributor.sendToServer(new RequestClaimPricesPayload());
             PacketDistributor.sendToServer(new RequestPendingStatePayload());
+            PacketDistributor.sendToServer(new RequestLandChunksPayload());
+            PacketDistributor.sendToServer(new RequestWarStatePayload());
+            // Pre-fill from the already-cached pending state right away so the
+            // screen shows the queued (new) values from the first frame. The
+            // request above refreshes this once the server's reply arrives.
+            PendingStateUiRefresh.syncScreenValues((EditConfigScreen) (Object) this);
         }
     }
 
@@ -40,7 +49,7 @@ public class EditConfigScreenMixin {
     private void lcFtbHook$stayOpenOnAccept(CallbackInfo ci) {
         // Keep the properties screen open after Accept instead of jumping
         // back to the team screen.
-        if (title != null && isFtbChunksPropertiesTitle(title) && autoclose) {
+        if (title != null && EditConfigScreenUiHelper.isFtbChunksPropertiesTitle(title) && autoclose) {
             autoclose = false;
             lcFtbHook$suppressedAutoclose = true;
         }
@@ -58,35 +67,24 @@ public class EditConfigScreenMixin {
         }
         PacketDistributor.sendToServer(new RequestClaimPricesPayload());
         PacketDistributor.sendToServer(new RequestPendingStatePayload());
+        PacketDistributor.sendToServer(new RequestLandChunksPayload());
+        PacketDistributor.sendToServer(new RequestWarStatePayload());
     }
 
-    @Inject(method = "getTitle", at = @At("RETURN"), cancellable = true, remap = false)
-    private void lcFtbHook$appendUpkeepNote(CallbackInfoReturnable<Component> callback) {
-        Component title = callback.getReturnValue();
-        if (title == null || !isFtbChunksPropertiesTitle(title)) {
-            return;
+    @Inject(method = "doCancel", at = @At("HEAD"), remap = false)
+    private void lcFtbHook$discardWithoutConfirm(CallbackInfo ci) {
+        // Cancel/ESC should always discard silently instead of asking
+        // "Discard unsaved changes?". Clearing the dirty flag up front makes
+        // doCancel take the direct close path without the confirmation popup.
+        if (title != null && EditConfigScreenUiHelper.isFtbChunksPropertiesTitle(title)) {
+            changed = false;
         }
-
-        callback.setReturnValue(Component.empty()
-                .append(title)
-                .append(Component.literal("\n"))
-                .append(Component.translatable(
-                        "gui.lc_ftb_hook.protection_prices_note",
-                        ProtectionPriceDisplay.upkeepPeriodLabel()
-                ).withStyle(ChatFormatting.GRAY)));
     }
 
     @Inject(method = "getTopPanelHeight", at = @At("RETURN"), cancellable = true, remap = false)
     private void lcFtbHook$expandTopPanelForNote(CallbackInfoReturnable<Integer> callback) {
-        if (title != null && isFtbChunksPropertiesTitle(title)) {
-            callback.setReturnValue(callback.getReturnValue() + 10);
+        if (title != null && EditConfigScreenUiHelper.isFtbChunksPropertiesTitle(title)) {
+            callback.setReturnValue(callback.getReturnValue() + EditConfigScreenUiHelper.TOP_PANEL_EXTRA_HEIGHT);
         }
-    }
-
-    private static boolean isFtbChunksPropertiesTitle(Component title) {
-        String text = title.getString().toLowerCase();
-        return text.contains("ftb chunks")
-                || text.contains("chunk")
-                || text.contains("team properties");
     }
 }

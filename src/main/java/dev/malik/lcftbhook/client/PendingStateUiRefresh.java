@@ -7,7 +7,10 @@ import dev.ftb.mods.ftblibrary.util.client.ClientUtils;
 import dev.ftb.mods.ftbteams.api.FTBTeamsAPI;
 import dev.ftb.mods.ftbteams.api.Team;
 import dev.malik.lcftbhook.mixin.client.EditConfigScreenAccessor;
+import dev.malik.lcftbhook.service.ProtectionPriceDisplay;
+import dev.malik.lcftbhook.service.ProtectionPricing;
 
+import javax.annotation.Nullable;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Objects;
@@ -29,12 +32,9 @@ public final class PendingStateUiRefresh {
      * which carries no team reference.
      */
     public static void syncSelfTeamOpenScreen() {
-        if (!FTBTeamsAPI.api().isClientManagerLoaded()) {
-            return;
-        }
-        Team selfTeam = FTBTeamsAPI.api().getClientManager().selfTeam();
-        if (selfTeam != null) {
-            syncOpenScreenValues(selfTeam);
+        EditConfigScreen screen = ClientUtils.getCurrentGuiAs(EditConfigScreen.class);
+        if (screen != null) {
+            syncScreenValues(screen);
         }
     }
 
@@ -53,23 +53,48 @@ public final class PendingStateUiRefresh {
      */
     public static void syncOpenScreenValues(Team team) {
         EditConfigScreen screen = ClientUtils.getCurrentGuiAs(EditConfigScreen.class);
-        if (screen == null) {
+        if (screen != null) {
+            syncScreenValues(screen, team);
+        }
+    }
+
+    /** Resolves the player's own team and pre-fills the given screen. */
+    public static void syncScreenValues(EditConfigScreen screen) {
+        Team selfTeam = selfTeam();
+        if (selfTeam != null) {
+            syncScreenValues(screen, selfTeam);
+        }
+    }
+
+    public static void syncScreenValues(EditConfigScreen screen, Team team) {
+        EditConfigScreenAccessor accessor = (EditConfigScreenAccessor) (Object) screen;
+
+        // Never overwrite edits the player has made but not yet accepted.
+        // Background syncs (upkeep pending-state pushes, property broadcasts
+        // from other players' accepts) would otherwise silently reset the
+        // clicked values, making every subsequent Accept a no-op.
+        if (accessor.lcFtbHook$getChanged()) {
             return;
         }
 
-        ConfigGroup root = ((EditConfigScreenAccessor) (Object) screen).lcFtbHook$getGroup();
+        ConfigGroup root = accessor.lcFtbHook$getGroup();
         if (root == null) {
             return;
         }
 
+        // Index configs by the normalized protection key (the property path,
+        // e.g. "allow_pvp" / "land_allow_pvp"). The build protections are moved
+        // into a custom "build_protection" subgroup, so keying by group id is
+        // unreliable; the normalized path is stable regardless of grouping.
         Map<String, ConfigValue<?>> configs = new HashMap<>();
         collectConfigs(root, configs);
 
         boolean[] changed = {false};
         team.getProperties().forEach((property, propertyValue) -> {
-            // The properties screen groups entries by property namespace and
-            // uses the property path as config id (e.g. ftbchunks.allow_pvp).
-            String key = property.getId().getNamespace() + "." + property.getId().getPath();
+            String key = ProtectionPricing.propertyKey(property);
+            if (!ProtectionPriceDisplay.isProtectionPropertyKey(key)) {
+                return;
+            }
             ConfigValue<?> config = configs.get(key);
             if (config == null) {
                 return;
@@ -80,12 +105,12 @@ public final class PendingStateUiRefresh {
             // ListConfig). Skip those per entry instead of letting one
             // mismatch abort the sync for all remaining entries.
             try {
-                Object newValue = ClientPendingState.getDisplayValue(property, propertyValue.getValue());
-                if (Objects.equals(config.getValue(), newValue)) {
+                Object desired = ClientPendingState.getDisplayValue(property, propertyValue.getValue());
+                if (Objects.equals(config.getValue(), desired)) {
                     return;
                 }
 
-                setConfigValue(config, newValue);
+                setConfigValue(config, desired);
                 changed[0] = true;
             } catch (RuntimeException ignored) {
                 // Type mismatch between property value and config; leave the
@@ -98,6 +123,14 @@ public final class PendingStateUiRefresh {
         }
     }
 
+    @Nullable
+    private static Team selfTeam() {
+        if (!FTBTeamsAPI.api().isClientManagerLoaded()) {
+            return null;
+        }
+        return FTBTeamsAPI.api().getClientManager().selfTeam();
+    }
+
     @SuppressWarnings({"unchecked", "rawtypes"})
     private static void setConfigValue(ConfigValue config, Object value) {
         config.setValue(config.copy(value));
@@ -105,7 +138,10 @@ public final class PendingStateUiRefresh {
 
     private static void collectConfigs(ConfigGroup group, Map<String, ConfigValue<?>> out) {
         for (ConfigValue<?> value : group.getValues()) {
-            out.put(group.getId() + "." + value.id, value);
+            String key = ProtectionPriceDisplay.protectionPropertyKey(value.id, value.getPath());
+            if (ProtectionPriceDisplay.isProtectionPropertyKey(key)) {
+                out.putIfAbsent(key, value);
+            }
         }
         for (ConfigGroup subgroup : group.getSubgroups()) {
             collectConfigs(subgroup, out);

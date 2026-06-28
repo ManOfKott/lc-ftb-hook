@@ -32,10 +32,6 @@ public final class LcTeamSyncService {
             return;
         }
         if (!TeamLinkRegistry.isFtbPartyInUse(server, ftbTeam)) {
-            FtbHookSavedData data = FtbHookSavedData.get(server);
-            if (data.get(ftbTeam.getId()) != null) {
-                TeamLinkRegistry.unlinkFtbParty(server, ftbTeam.getId());
-            }
             return;
         }
         if (LcTeamAccess.cache() == null) {
@@ -84,7 +80,9 @@ public final class LcTeamSyncService {
         }
 
         LcTeamDeletionGuard.runAllowed(() -> cache.removeTeam(entry.lcTeamId()));
-        TeamLinkRegistry.unlinkFtbParty(server, ftbTeam.getId());
+        if (FtbHookSavedData.get(server).removeLink(ftbTeam.getId()) != null) {
+            LCFtbHook.LOGGER.info("Removed hook data for deleted FTB party {}", ftbTeam.getId());
+        }
         LCFtbHook.LOGGER.info("Removed LC team {} for deleted FTB party {}", entry.lcTeamId(), ftbTeam.getId());
     }
 

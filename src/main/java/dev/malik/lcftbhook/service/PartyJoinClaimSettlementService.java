@@ -7,6 +7,8 @@ import dev.malik.lcftbhook.LCFtbHook;
 import dev.malik.lcftbhook.bank.ClaimBatchContext;
 import dev.malik.lcftbhook.data.FtbHookSavedData;
 import dev.malik.lcftbhook.service.ClaimPriceSync;
+import dev.malik.lcftbhook.teams.FtbTeamCatalog;
+import dev.malik.lcftbhook.service.WarStateSync;
 import dev.malik.lcftbhook.util.MoneyMessageUtil;
 import dev.malik.lcftbhook.util.MoneyUtil;
 import net.minecraft.commands.CommandSourceStack;
@@ -44,6 +46,7 @@ public final class PartyJoinClaimSettlementService {
             }
 
             FtbHookSavedData savedData = FtbHookSavedData.get(server);
+            FtbTeamCatalog.dissolveWarLinks(server, previousTeam.getTeamId());
             savedData.setPendingState(previousTeam.getTeamId(), savedData.getPendingState(previousTeam.getTeamId()).cleared());
 
             CommandSourceStack source = server.createCommandSourceStack().withSuppressedOutput();
@@ -66,6 +69,7 @@ public final class PartyJoinClaimSettlementService {
                     false
             );
             ClaimPriceSync.syncToPlayer(player);
+            WarStateSync.syncToPlayer(player);
 
             LCFtbHook.LOGGER.info(
                     "Dissolved {} personal claims for {} when joining a party (refund {})",

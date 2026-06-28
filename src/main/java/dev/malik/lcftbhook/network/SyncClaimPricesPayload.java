@@ -2,7 +2,9 @@ package dev.malik.lcftbhook.network;
 
 import dev.malik.lcftbhook.LCFtbHook;
 import dev.malik.lcftbhook.client.ClientClaimPrices;
+import dev.malik.lcftbhook.client.ClientWarState;
 import dev.malik.lcftbhook.client.PendingStateUiRefresh;
+import dev.malik.lcftbhook.client.TeamUiRefresh;
 import net.minecraft.network.FriendlyByteBuf;
 import net.minecraft.network.codec.StreamCodec;
 import net.minecraft.network.protocol.common.custom.CustomPacketPayload;
@@ -23,7 +25,9 @@ public record SyncClaimPricesPayload(
         long pvpDisablePrice,
         long blockInteractProtectionPrice,
         long blockEditProtectionPrice,
-        long entityInteractProtectionPrice
+        long entityInteractProtectionPrice,
+        int landChunkGroupSize,
+        boolean warEnabled
 ) implements CustomPacketPayload {
     public static final Type<SyncClaimPricesPayload> TYPE = new Type<>(ResourceLocation.fromNamespaceAndPath(LCFtbHook.MOD_ID, "sync_claim_prices"));
     public static final StreamCodec<FriendlyByteBuf, SyncClaimPricesPayload> STREAM_CODEC = StreamCodec.of(
@@ -42,6 +46,8 @@ public record SyncClaimPricesPayload(
                 buffer.writeLong(payload.blockInteractProtectionPrice);
                 buffer.writeLong(payload.blockEditProtectionPrice);
                 buffer.writeLong(payload.entityInteractProtectionPrice);
+                buffer.writeVarInt(payload.landChunkGroupSize());
+                buffer.writeBoolean(payload.warEnabled());
             },
             buffer -> new SyncClaimPricesPayload(
                     buffer.readLong(),
@@ -57,7 +63,9 @@ public record SyncClaimPricesPayload(
                     buffer.readLong(),
                     buffer.readLong(),
                     buffer.readLong(),
-                    buffer.readLong()
+                    buffer.readLong(),
+                    buffer.readVarInt(),
+                    buffer.readBoolean()
             )
     );
 
@@ -82,9 +90,12 @@ public record SyncClaimPricesPayload(
                     payload.pvpDisablePrice(),
                     payload.blockInteractProtectionPrice(),
                     payload.blockEditProtectionPrice(),
-                    payload.entityInteractProtectionPrice()
+                    payload.entityInteractProtectionPrice(),
+                    payload.landChunkGroupSize()
             );
+            ClientWarState.setWarModuleEnabled(payload.warEnabled());
             PendingStateUiRefresh.refreshOpenScreens();
+            TeamUiRefresh.refreshMyTeamScreenIfOpen();
         });
     }
 }

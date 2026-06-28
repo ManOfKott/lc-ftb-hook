@@ -1,5 +1,6 @@
 package dev.malik.lcftbhook.client;
 
+import dev.ftb.mods.ftbchunks.client.map.MapManager;
 import dev.malik.lcftbhook.service.ProtectionPriceDisplay;
 import dev.malik.lcftbhook.service.ProtectionPricing;
 import dev.ftb.mods.ftbteams.api.property.TeamProperty;
@@ -13,6 +14,8 @@ public final class ClientPendingState {
     private static Map<String, String> pendingProperties = Map.of();
     private static Set<String> pendingForceLoads = Set.of();
     private static Set<String> pendingForceUnloads = Set.of();
+    private static Set<String> pendingLandChunks = Set.of();
+    private static Set<String> pendingBuildChunks = Set.of();
 
     private ClientPendingState() {
     }
@@ -20,11 +23,16 @@ public final class ClientPendingState {
     public static void update(
             Map<String, String> properties,
             Set<String> forceLoads,
-            Set<String> forceUnloads
+            Set<String> forceUnloads,
+            Set<String> landChunks,
+            Set<String> buildChunks
     ) {
         pendingProperties = Map.copyOf(properties);
         pendingForceLoads = Set.copyOf(forceLoads);
         pendingForceUnloads = Set.copyOf(forceUnloads);
+        pendingLandChunks = Set.copyOf(landChunks);
+        pendingBuildChunks = Set.copyOf(buildChunks);
+        MapManager.getInstance().ifPresent(manager -> manager.updateAllRegions(false));
     }
 
     public static boolean hasPendingProperty(String propertyId) {
@@ -41,28 +49,31 @@ public final class ClientPendingState {
     @Nullable
     public static String resolvePendingPropertyKey(String propertyId) {
         String normalized = ProtectionPriceDisplay.normalizePropertyKey(propertyId);
-        if (normalized == null) {
-            return null;
-        }
-
-        if (pendingProperties.containsKey(normalized)) {
+        if (normalized != null && pendingProperties.containsKey(normalized)) {
             return normalized;
         }
 
         for (String pendingKey : pendingProperties.keySet()) {
-            if (normalized.equals(pendingKey)) {
+            if (matchesPendingPropertyKey(propertyId, normalized, pendingKey)) {
                 return pendingKey;
             }
         }
 
-        for (TeamProperty<?> property : ProtectionPricing.PROTECTION_PROPERTIES) {
-            String key = ProtectionPricing.propertyKey(property);
-            if (key.equals(normalized) && pendingProperties.containsKey(key)) {
-                return key;
-            }
-        }
-
         return null;
+    }
+
+    private static boolean matchesPendingPropertyKey(
+            String propertyId,
+            @Nullable String normalized,
+            String pendingKey
+    ) {
+        if (propertyId.equals(pendingKey) || pendingKey.equals(normalized)) {
+            return true;
+        }
+        if (propertyId.endsWith("." + pendingKey)) {
+            return true;
+        }
+        return false;
     }
 
     @Nullable
@@ -77,6 +88,14 @@ public final class ClientPendingState {
 
     public static boolean isPendingForceUnload(net.minecraft.resources.ResourceKey<net.minecraft.world.level.Level> dimension, int x, int z) {
         return pendingForceUnloads.contains(ChunkPosKeyClient.encode(dimension.location(), x, z));
+    }
+
+    public static boolean isPendingLandChunk(net.minecraft.resources.ResourceKey<net.minecraft.world.level.Level> dimension, int x, int z) {
+        return pendingLandChunks.contains(ChunkPosKeyClient.encode(dimension.location(), x, z));
+    }
+
+    public static boolean isPendingBuildChunk(net.minecraft.resources.ResourceKey<net.minecraft.world.level.Level> dimension, int x, int z) {
+        return pendingBuildChunks.contains(ChunkPosKeyClient.encode(dimension.location(), x, z));
     }
 
     @SuppressWarnings("unchecked")

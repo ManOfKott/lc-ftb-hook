@@ -1,18 +1,36 @@
 package dev.malik.lcftbhook.mixin.client;
 
+import com.llamalad7.mixinextras.sugar.Local;
+import dev.ftb.mods.ftblibrary.config.ConfigGroup;
+import dev.ftb.mods.ftblibrary.config.ConfigValue;
+import dev.ftb.mods.ftbteams.api.property.TeamProperty;
+import dev.ftb.mods.ftbteams.api.property.TeamPropertyValue;
 import dev.ftb.mods.ftbteams.client.gui.MyTeamScreen;
+import dev.malik.lcftbhook.service.ProtectionPricing;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.injection.At;
+import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.Redirect;
+import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
+
+import java.util.LinkedHashMap;
+import java.util.Map;
 
 /**
- * FTB Teams' settings button installs a saved-callback on the properties
- * screen that always navigates back to the team screen, both on accept and
- * on cancel. Keep the player on the settings page when they accept; cancel
- * still returns to the team screen.
+ * Tweaks the team properties screen:
+ * <ul>
+ *   <li>Keep the player on the settings page after accepting (cancel still
+ *       returns to the team screen).</li>
+ *   <li>Move the FTB Chunks build protection settings out of the generic
+ *       "FTB Chunks Properties" section into their own "Build Chunk Protection"
+ *       section placed directly below the land protections.</li>
+ * </ul>
  */
 @Mixin(targets = "dev.ftb.mods.ftbteams.client.gui.MyTeamScreen$SettingsButton", remap = false)
 public class MyTeamScreenSettingsButtonMixin {
+    private static final String BUILD_GROUP_ID = "build_protection";
+    private static final String LAND_GROUP_ID = "lc_ftb_hook";
+
     @Redirect(
             method = "lambda$new$0",
             at = @At(
@@ -24,6 +42,62 @@ public class MyTeamScreenSettingsButtonMixin {
     private static void lcFtbHook$stayOnSettingsAfterAccept(MyTeamScreen screen, MyTeamScreen capturedScreen, boolean accepted) {
         if (!accepted) {
             screen.openGui();
+        }
+    }
+
+    @Redirect(
+            method = "lambda$new$2",
+            at = @At(
+                    value = "INVOKE",
+                    target = "Ldev/ftb/mods/ftbteams/api/property/TeamProperty;config(Ldev/ftb/mods/ftblibrary/config/ConfigGroup;Ldev/ftb/mods/ftbteams/api/property/TeamPropertyValue;)Ldev/ftb/mods/ftblibrary/config/ConfigValue;"
+            ),
+            remap = false
+    )
+    @SuppressWarnings({"rawtypes", "unchecked"})
+    private static ConfigValue<?> lcFtbHook$routeBuildProtection(TeamProperty key, ConfigGroup cfg, TeamPropertyValue value) {
+        if (ProtectionPricing.BUILD_PROTECTION_PROPERTIES.contains(key) && cfg.getParent() != null) {
+            ConfigGroup buildGroup = cfg.getParent().getOrCreateSubgroup(BUILD_GROUP_ID);
+            ConfigValue<?> configValue = key.config(buildGroup, value);
+            if (configValue != null) {
+                // Reuse the FTB Chunks translations so the entries keep their
+                // familiar names inside the new section.
+                configValue.setNameKey("ftbteamsconfig.ftbchunks." + key.getId().getPath());
+            }
+            return configValue;
+        }
+        return key.config(cfg, value);
+    }
+
+    @Inject(
+            method = "lambda$new$3",
+            at = @At(value = "NEW", target = "dev/ftb/mods/ftblibrary/config/ui/EditConfigScreen"),
+            remap = false
+    )
+    private static void lcFtbHook$orderProtectionSections(
+            MyTeamScreen screen,
+            dev.ftb.mods.ftblibrary.ui.SimpleButton button,
+            dev.ftb.mods.ftblibrary.ui.input.MouseButton mouseButton,
+            CallbackInfo ci,
+            @Local ConfigGroup config
+    ) {
+        Map<String, ConfigGroup> subgroups = ((ConfigGroupAccessor) config).lcFtbHook$getSubgroups();
+        if (!subgroups.containsKey(BUILD_GROUP_ID)) {
+            return;
+        }
+
+        LinkedHashMap<String, ConfigGroup> ordered = new LinkedHashMap<>();
+        moveIfPresent(ordered, subgroups, LAND_GROUP_ID);
+        moveIfPresent(ordered, subgroups, BUILD_GROUP_ID);
+        ordered.putAll(subgroups);
+
+        subgroups.clear();
+        subgroups.putAll(ordered);
+    }
+
+    private static void moveIfPresent(Map<String, ConfigGroup> target, Map<String, ConfigGroup> source, String id) {
+        ConfigGroup group = source.get(id);
+        if (group != null) {
+            target.put(id, group);
         }
     }
 }

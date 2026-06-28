@@ -56,7 +56,7 @@ public final class ProtectionService {
         if (chunkCount <= 0 && forceLoadCount <= 0) {
             return true;
         }
-        MoneyValue cost = ProtectionPricing.calculateTotalUpkeepCost(team, pendingState.pendingProperties(), chunkCount, forceLoadCount);
+        MoneyValue cost = WarService.calculateTotalUpkeepCost(server, team, pendingState);
         if (cost.isEmpty()) {
             return true;
         }
@@ -65,18 +65,8 @@ public final class ProtectionService {
     }
 
     public static void enforceInsufficientFunds(MinecraftServer server, Team team) {
-        if (isReverting()) {
-            return;
-        }
-        REVERTING.set(true);
-        try {
-            PendingChangeService.removeAllForceLoads(server, team);
-            ProtectionPricing.applyMinimumProtections(server, team);
-            FtbHookSavedData.get(server).setProtectionLocked(team.getTeamId(), true);
-            notifyTeam(server, team, "message.lc_ftb_hook.protection_locked");
-        } finally {
-            REVERTING.set(false);
-        }
+        FtbHookSavedData.get(server).setProtectionLocked(team.getTeamId(), true);
+        notifyTeam(server, team, "message.lc_ftb_hook.protection_locked");
     }
 
     public static void tryUnlock(MinecraftServer server, Team team) {

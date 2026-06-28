@@ -1,6 +1,7 @@
 package dev.malik.lcftbhook.bank;
 
 import dev.ftb.mods.ftbchunks.net.RequestChunkChangePacket;
+import dev.malik.lcftbhook.config.LCFtbHookConfig;
 import dev.malik.lcftbhook.service.ClaimPriceSync;
 import dev.malik.lcftbhook.util.MoneyMessageUtil;
 import dev.malik.lcftbhook.util.MoneyUtil;
@@ -76,13 +77,32 @@ public final class ClaimBatchContext {
         EXECUTING.set(new BatchState(operation, playerId));
     }
 
-    public static void recordUnclaimRefund(long refundCopper) {
+    public static void recordClaimSpend(long priceCopper) {
         BatchState state = EXECUTING.get();
         if (state == null) {
             return;
         }
-        state.refundCopper += refundCopper;
+        state.claimPaidCopper += priceCopper;
+        state.claimPaidCount++;
+        state.uiSyncNeeded = true;
+    }
+
+    public static void recordClaimFree() {
+        BatchState state = EXECUTING.get();
+        if (state == null) {
+            return;
+        }
+        state.claimFreeCount++;
+        state.uiSyncNeeded = true;
+    }
+
+    public static void recordUnclaim(long refundCopper) {
+        BatchState state = EXECUTING.get();
+        if (state == null) {
+            return;
+        }
         state.unclaimCount++;
+        state.refundCopper += refundCopper;
         state.uiSyncNeeded = true;
     }
 
@@ -116,45 +136,11 @@ public final class ClaimBatchContext {
             }
 
             if (state.operation == RequestChunkChangePacket.ChunkChangeOp.UNCLAIM && state.unclaimCount > 0) {
-                Component refund = MoneyMessageUtil.formatValue(MoneyUtil.fromCopper(state.refundCopper));
-                if (state.unclaimCount == 1) {
-                    player.displayClientMessage(
-                            Component.translatable("message.lc_ftb_hook.unclaim_refund", refund),
-                            false
-                    );
-                } else {
-                    player.displayClientMessage(
-                            Component.translatable(
-                                    "message.lc_ftb_hook.unclaim_refund_bulk",
-                                    refund,
-                                    state.unclaimCount
-                            ),
-                            false
-                    );
-                }
+                sendUnclaimSummary(player, state);
             }
 
-            if (state.operation == RequestChunkChangePacket.ChunkChangeOp.CLAIM && state.claimInsufficientCount > 0) {
-                Component unitPrice = MoneyMessageUtil.formatValue(MoneyUtil.fromCopper(state.claimUnitPriceCopper));
-                Component balance = state.insufficientBalance == null
-                        ? Component.translatable("message.lc_ftb_hook.balance_empty")
-                        : state.insufficientBalance;
-                if (state.claimInsufficientCount == 1) {
-                    player.displayClientMessage(
-                            Component.translatable("message.lc_ftb_hook.insufficient_funds", unitPrice, balance),
-                            false
-                    );
-                } else {
-                    player.displayClientMessage(
-                            Component.translatable(
-                                    "message.lc_ftb_hook.insufficient_funds_bulk_claim",
-                                    unitPrice,
-                                    state.claimInsufficientCount,
-                                    balance
-                            ),
-                            false
-                    );
-                }
+            if (state.operation == RequestChunkChangePacket.ChunkChangeOp.CLAIM) {
+                sendClaimSummary(player, state);
             }
 
             if (state.uiSyncNeeded) {
@@ -165,11 +151,112 @@ public final class ClaimBatchContext {
         }
     }
 
+    private static void sendUnclaimSummary(ServerPlayer player, BatchState state) {
+        int refundPercent = refundPercent();
+        if (state.refundCopper > 0) {
+            Component refund = MoneyMessageUtil.formatValue(MoneyUtil.fromCopper(state.refundCopper));
+            if (state.unclaimCount == 1) {
+                player.displayClientMessage(
+                        Component.translatable("message.lc_ftb_hook.unclaim_refund", refund, refundPercent),
+                        false
+                );
+            } else {
+                player.displayClientMessage(
+                        Component.translatable(
+                                "message.lc_ftb_hook.unclaim_refund_bulk",
+                                refund,
+                                state.unclaimCount,
+                                refundPercent
+                        ),
+                        false
+                );
+            }
+            return;
+        }
+
+        if (state.unclaimCount == 1) {
+            player.displayClientMessage(
+                    Component.translatable("message.lc_ftb_hook.unclaim_bulk_single"),
+                    false
+            );
+        } else {
+            player.displayClientMessage(
+                    Component.translatable("message.lc_ftb_hook.unclaim_bulk", state.unclaimCount),
+                    false
+            );
+        }
+    }
+
+    private static void sendClaimSummary(ServerPlayer player, BatchState state) {
+        if (state.claimInsufficientCount > 0) {
+            Component unitPrice = MoneyMessageUtil.formatValue(MoneyUtil.fromCopper(state.claimUnitPriceCopper));
+            Component balance = state.insufficientBalance == null
+                    ? Component.translatable("message.lc_ftb_hook.balance_empty")
+                    : state.insufficientBalance;
+            if (state.claimInsufficientCount == 1) {
+                player.displayClientMessage(
+                        Component.translatable("message.lc_ftb_hook.insufficient_funds", unitPrice, balance),
+                        false
+                );
+            } else {
+                player.displayClientMessage(
+                        Component.translatable(
+                                "message.lc_ftb_hook.insufficient_funds_bulk_claim",
+                                unitPrice,
+                                state.claimInsufficientCount,
+                                balance
+                        ),
+                        false
+                );
+            }
+        }
+
+        int claimedCount = state.claimPaidCount + state.claimFreeCount;
+        if (claimedCount <= 0) {
+            return;
+        }
+
+        if (state.claimPaidCopper > 0) {
+            Component spent = MoneyMessageUtil.formatValue(MoneyUtil.fromCopper(state.claimPaidCopper));
+            if (claimedCount == 1) {
+                player.displayClientMessage(
+                        Component.translatable("message.lc_ftb_hook.claim_paid", spent),
+                        false
+                );
+            } else {
+                player.displayClientMessage(
+                        Component.translatable("message.lc_ftb_hook.claim_paid_bulk", spent, claimedCount),
+                        false
+                );
+            }
+            return;
+        }
+
+        if (claimedCount == 1) {
+            player.displayClientMessage(
+                    Component.translatable("message.lc_ftb_hook.claim_free"),
+                    false
+            );
+        } else {
+            player.displayClientMessage(
+                    Component.translatable("message.lc_ftb_hook.claim_free_bulk", claimedCount),
+                    false
+            );
+        }
+    }
+
+    private static int refundPercent() {
+        return (int) Math.round(LCFtbHookConfig.SERVER.unclaimRefundRatio.get() * 100.0D);
+    }
+
     private static final class BatchState {
         private final RequestChunkChangePacket.ChunkChangeOp operation;
         private final UUID playerId;
         private long refundCopper;
         private int unclaimCount;
+        private long claimPaidCopper;
+        private int claimPaidCount;
+        private int claimFreeCount;
         private int claimInsufficientCount;
         private long claimUnitPriceCopper;
         @Nullable

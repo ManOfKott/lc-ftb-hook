@@ -4,6 +4,7 @@ import dev.ftb.mods.ftbchunks.data.ClaimedChunkManagerImpl;
 import dev.ftb.mods.ftbteams.api.Team;
 import dev.malik.lcftbhook.LCFtbHook;
 import dev.malik.lcftbhook.service.PartyDisbandSettlementService;
+import dev.malik.lcftbhook.teams.FtbTeamCatalog;
 import net.minecraft.server.MinecraftServer;
 import net.neoforged.neoforge.server.ServerLifecycleHooks;
 import org.spongepowered.asm.mixin.Mixin;
@@ -15,7 +16,7 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 public class ClaimedChunkManagerImplDeleteTeamMixin {
     @Inject(method = "deleteTeam", at = @At("HEAD"), remap = false)
     private void lcFtbHook$settleBeforeDelete(Team team, CallbackInfo ci) {
-        if (team == null || !team.isPartyTeam()) {
+        if (team == null) {
             return;
         }
 
@@ -25,7 +26,11 @@ public class ClaimedChunkManagerImplDeleteTeamMixin {
         }
 
         try {
-            PartyDisbandSettlementService.settle(server, team);
+            if (FtbTeamCatalog.isPartyTeam(team)) {
+                PartyDisbandSettlementService.settle(server, team);
+            } else {
+                FtbTeamCatalog.dissolveWarLinks(server, team.getId());
+            }
         } catch (Throwable error) {
             LCFtbHook.LOGGER.error(
                     "Party disband settlement failed for {} - FTB party deletion will continue",

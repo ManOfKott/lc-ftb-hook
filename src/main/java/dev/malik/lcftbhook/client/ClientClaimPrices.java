@@ -36,6 +36,7 @@ public final class ClientClaimPrices {
     private static long blockInteractProtectionPrice = -1L;
     private static long blockEditProtectionPrice = -1L;
     private static long entityInteractProtectionPrice = -1L;
+    private static int landChunkGroupSize = -1;
     private static boolean balanceSynced;
     private static boolean balanceEmpty = true;
     @Nullable
@@ -60,7 +61,8 @@ public final class ClientClaimPrices {
             long pvpDisable,
             long blockInteract,
             long blockEdit,
-            long entityInteract
+            long entityInteract,
+            int landGroupSize
     ) {
         claimPrice = claim;
         forceLoadUpkeepPrice = forceLoadUpkeep;
@@ -76,6 +78,11 @@ public final class ClientClaimPrices {
         blockInteractProtectionPrice = blockInteract;
         blockEditProtectionPrice = blockEdit;
         entityInteractProtectionPrice = entityInteract;
+        landChunkGroupSize = landGroupSize;
+    }
+
+    public static int landChunkGroupSize() {
+        return landChunkGroupSize > 0 ? landChunkGroupSize : 5;
     }
 
     public static int upkeepPeriodMinutes() {

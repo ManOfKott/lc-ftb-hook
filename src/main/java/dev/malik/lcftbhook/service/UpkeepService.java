@@ -9,8 +9,7 @@ import dev.malik.lcftbhook.bank.BankAccountHelper;
 import dev.malik.lcftbhook.config.LCFtbHookConfig;
 import dev.malik.lcftbhook.data.FtbHookSavedData;
 import dev.malik.lcftbhook.data.TeamPendingState;
-import dev.malik.lcftbhook.teams.TeamLinkRegistry;
-import io.github.lightman314.lightmanscurrency.api.money.bank.IBankAccount;
+import dev.malik.lcftbhook.teams.FtbTeamCatalog;
 import io.github.lightman314.lightmanscurrency.api.money.value.MoneyValue;
 import net.minecraft.server.MinecraftServer;
 import net.neoforged.bus.api.SubscribeEvent;
@@ -24,14 +23,12 @@ public class UpkeepService {
         MinecraftServer server = event.getServer();
         long periodTicks = LCFtbHookConfig.SERVER.upkeepPeriodMinutes.get() * 60L * 20L;
 
-        // Never charge immediately after a restart; wait one full period first.
         if (nextUpkeepTick < 0L) {
             nextUpkeepTick = server.getTickCount() + periodTicks;
             return;
         }
 
         if (server.getPlayerList().getPlayerCount() <= 0) {
-            // Pause the countdown while the server is empty.
             nextUpkeepTick++;
             return;
         }
@@ -46,7 +43,7 @@ public class UpkeepService {
             return;
         }
 
-        for (Team team : FTBTeamsAPI.api().getManager().getTeams()) {
+        for (Team team : FtbTeamCatalog.trackedTeams(server)) {
             try {
                 processTeamUpkeep(server, team);
             } catch (Exception e) {
@@ -57,9 +54,6 @@ public class UpkeepService {
 
     private void processTeamUpkeep(MinecraftServer server, Team team) {
         if (!team.isValid()) {
-            return;
-        }
-        if (team.isPartyTeam() && !TeamLinkRegistry.isFtbPartyInUse(server, team)) {
             return;
         }
 
@@ -76,39 +70,46 @@ public class UpkeepService {
             return;
         }
 
-        MoneyValue cost = ProtectionPricing.calculateTotalUpkeepCost(team, pendingState);
+        MoneyValue projectedCost = WarService.calculateTotalUpkeepCost(server, team, pendingState);
         LCFtbHook.LOGGER.info("[PendingDebug] Upkeep for team {}: chunks={}, forceLoads={}, cost={}, pendingEmpty={}",
-                team.getShortName(), chunkCount, forceLoadCount, cost.getString(), pendingState.isEmpty());
+                team.getShortName(), chunkCount, forceLoadCount, projectedCost.getString(), pendingState.isEmpty());
 
-        if (cost.isEmpty()) {
-            if (!pendingState.isEmpty()) {
-                PendingChangeService.applyPendingChanges(server, team);
-            }
+        UpkeepSettlementService.SettlementResult result = UpkeepSettlementService.settle(server, team);
+
+        if (result.anythingRestored()) {
+            ProtectionService.notifyTeam(server, team,
+                    UpkeepMessageBuilder.buildRestorationSummary(result.restoredProtections(), result.restoredWarNames()));
+        }
+
+        if (result.anythingSuspended()) {
+            ProtectionService.notifyTeam(server, team,
+                    UpkeepMessageBuilder.buildSuspensionSummary(result.suspendedProtections(), result.warsSuspended()));
+        }
+
+        if (!result.unaffordableRestorations().isEmpty()) {
+            ProtectionService.notifyTeam(server, team,
+                    UpkeepMessageBuilder.buildUnaffordableRestorationMessage(result.unaffordableRestorations()));
+        }
+
+        UpkeepBreakdown breakdown = UpkeepBreakdown.capture(
+                server,
+                team,
+                result.forceLoadCount(),
+                result.paid() ? result.charged() : MoneyValue.empty(),
+                result.pendingState()
+        );
+        UpkeepBreakdownStore.store(breakdown);
+
+        if (!result.paid()) {
+            return;
+        }
+
+        if (result.charged().isEmpty()) {
             ProtectionService.tryUnlock(server, team);
             return;
         }
 
-        IBankAccount account = BankAccountHelper.getAccountForTeam(server, team);
-        if (!account.getMoneyStorage().containsValue(cost)) {
-            LCFtbHook.LOGGER.info("[PendingDebug] Team {}: insufficient funds for upkeep (cost={}, balance={})",
-                    team.getShortName(), cost.getString(), account.getMoneyStorage().getAllValueText().getString());
-            ProtectionService.enforceInsufficientFunds(server, team);
-            return;
-        }
-
-        if (!pendingState.isEmpty()) {
-            PendingChangeService.applyPendingChanges(server, team);
-            chunkData = FTBChunksAPI.api().getManager().getOrCreateData(team);
-            forceLoadCount = chunkData.getForceLoadedChunks().size();
-            cost = ProtectionPricing.calculateTotalUpkeepCost(team, chunkCount, forceLoadCount);
-        }
-
-        account.withdrawMoney(cost);
-        savedData.setProtectionLocked(team.getTeamId(), false);
         ProtectionService.tryUnlock(server, team);
-
-        UpkeepBreakdown breakdown = UpkeepBreakdown.capture(team, chunkCount, forceLoadCount, cost);
-        UpkeepBreakdownStore.store(breakdown);
         ProtectionService.notifyTeamManagers(server, team, UpkeepMessageBuilder.buildSummary(breakdown));
     }
 }

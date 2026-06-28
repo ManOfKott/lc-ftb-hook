@@ -19,4 +19,5 @@ Write-Host ""
 & (Join-Path $PSScriptRoot "Apply-DevServerConfig.ps1")
 Write-Host ""
 Write-Host "Starte NeoForge Dev-Server..." -ForegroundColor Green
+Write-Host "Hinweis: Gradle bleibt bei ~88% EXECUTING solange der Server laeuft - das ist normal." -ForegroundColor DarkGray
 & .\gradlew.bat runServer

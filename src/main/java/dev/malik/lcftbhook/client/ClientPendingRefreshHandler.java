@@ -4,7 +4,9 @@ import dev.ftb.mods.ftbteams.api.FTBTeamsAPI;
 import dev.ftb.mods.ftbteams.api.Team;
 import dev.ftb.mods.ftbteams.api.event.TeamEvent;
 import dev.malik.lcftbhook.network.RequestClaimPricesPayload;
+import dev.malik.lcftbhook.network.RequestLandChunksPayload;
 import dev.malik.lcftbhook.network.RequestPendingStatePayload;
+import dev.malik.lcftbhook.network.RequestWarStatePayload;
 import net.neoforged.neoforge.network.PacketDistributor;
 
 public final class ClientPendingRefreshHandler {
@@ -12,6 +14,8 @@ public final class ClientPendingRefreshHandler {
         TeamEvent.CLIENT_PROPERTIES_CHANGED.register(event -> {
             PacketDistributor.sendToServer(new RequestClaimPricesPayload());
             PacketDistributor.sendToServer(new RequestPendingStatePayload());
+            PacketDistributor.sendToServer(new RequestLandChunksPayload());
+            PacketDistributor.sendToServer(new RequestWarStatePayload());
 
             // Only push values into an open properties screen when the change
             // concerns the player's own team; properties of other teams also

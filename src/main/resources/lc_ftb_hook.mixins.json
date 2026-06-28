@@ -4,7 +4,11 @@
   "compatibilityLevel": "JAVA_21",
   "mixins": [
     "ClaimedChunkManagerImplDeleteTeamMixin",
+    "ClaimedChunkManagerProtectionMixin",
+    "ClaimedChunkProtectionMixin",
+    "ChunkTeamDataCanPlayerUseMixin",
     "FTBChunksPlayerJoinedPartyMixin",
+    "FTBChunksPvPMixin",
     "PartyTeamRankSyncMixin",
     "TeamDataCacheRemoveTeamMixin",
     "TeamRoleChangeMixin",
@@ -17,10 +21,15 @@
     "ChunkScreenPanelMixin",
     "client.ChunkChangeResponsePacketClientMixin",
     "client.ChunkScreenPanelChunkButtonMixin",
+    "client.ConfigGroupAccessor",
     "client.EditConfigScreenAccessor",
     "client.EditConfigScreenConfigEntryButtonMixin",
     "client.EditConfigScreenMixin",
-    "client.MyTeamScreenSettingsButtonMixin"
+    "client.EditConfigScreenTopPanelMixin",
+    "client.EditConfigScreenParentTopPanelMixin",
+    "client.MyTeamScreenMixin",
+    "client.MyTeamScreenSettingsButtonMixin",
+    "client.RenderMapImageTaskLandTintMixin"
   ],
   "injectors": {
     "defaultRequire": 1

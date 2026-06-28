@@ -5,7 +5,9 @@ import dev.ftb.mods.ftbchunks.api.FTBChunksAPI;
 import dev.ftb.mods.ftbteams.api.Team;
 import dev.malik.lcftbhook.LCFtbHook;
 import dev.malik.lcftbhook.data.FtbHookSavedData;
+import dev.malik.lcftbhook.teams.FtbTeamCatalog;
 import dev.malik.lcftbhook.teams.LcTeamSyncService;
+import dev.malik.lcftbhook.service.WarStateSync;
 import dev.malik.lcftbhook.util.MoneyMessageUtil;
 import dev.malik.lcftbhook.util.MoneyUtil;
 import io.github.lightman314.lightmanscurrency.api.money.bank.IBankAccount;
@@ -37,6 +39,13 @@ public final class PartyDisbandSettlementService {
         }
 
         try {
+            // War cleanup and pending state must be cleared regardless of whether
+            // account transfer succeeds — otherwise disbanded teams leave orphaned
+            // war references and pending protection entries in SavedData.
+            FtbHookSavedData savedData = FtbHookSavedData.get(server);
+            FtbTeamCatalog.dissolveWarLinks(server, teamId);
+            savedData.setPendingState(teamId, savedData.getPendingState(teamId).cleared());
+
             UUID ownerId = team.getOwner();
             if (ownerId == null) {
                 return;
@@ -57,9 +66,6 @@ public final class PartyDisbandSettlementService {
                 );
                 return;
             }
-
-            FtbHookSavedData savedData = FtbHookSavedData.get(server);
-            savedData.setPendingState(teamId, savedData.getPendingState(teamId).cleared());
 
             Component accountBalance = MoneyMessageUtil.formatBalance(teamAccount);
             int claimedChunks = 0;
@@ -82,6 +88,10 @@ public final class PartyDisbandSettlementService {
             Component totalReceived = MoneyMessageUtil.formatBalance(teamAccount);
             transferAllFunds(teamAccount, ownerAccount);
             notifyOwner(server, ownerId, accountBalance, totalReceived, unclaimedChunks, refundCopper);
+            ServerPlayer owner = server.getPlayerList().getPlayer(ownerId);
+            if (owner != null) {
+                WarStateSync.syncToPlayer(owner);
+            }
             LCFtbHook.LOGGER.info(
                     "Settled disbanded party {} for owner {} ({} chunks, {} refund copper)",
                     teamId,
