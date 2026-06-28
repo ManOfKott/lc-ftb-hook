@@ -4,8 +4,14 @@ build/
 
 # IDE
 .idea/
+.eclipse/
+.vscode/settings.json
 *.iml
 out/
+bin/
+
+# Decompiled class files (IDE artifact)
+dev/
 
 # Runtime
 run/
