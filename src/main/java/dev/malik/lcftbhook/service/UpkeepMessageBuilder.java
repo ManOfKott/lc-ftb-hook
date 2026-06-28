@@ -36,21 +36,14 @@ public final class UpkeepMessageBuilder {
         boolean wroteAnything = false;
 
         if (!restored.isEmpty()) {
-            msg.append(Component.literal("✔ ")
-                    .withStyle(ChatFormatting.GREEN))
-                    .append(Component.translatable("message.lc_ftb_hook.restoration_header", restored.size())
-                            .withStyle(ChatFormatting.GREEN, ChatFormatting.BOLD));
-            appendProtectionList(msg, restored, ChatFormatting.AQUA);
+            msg.append(Component.translatable("message.lc_ftb_hook.restoration_header", restored.size())
+                    .withStyle(ChatFormatting.GREEN));
+            appendProtectionList(msg, restored, ChatFormatting.WHITE);
             wroteAnything = true;
         }
 
         for (String warName : restoredWarNames) {
-            if (wroteAnything) {
-                msg.append("\n");
-            }
-            if (!restored.isEmpty()) {
-                msg.append(Component.literal("  ").withStyle(ChatFormatting.DARK_GRAY));
-            }
+            if (wroteAnything) msg.append("\n");
             msg.append(Component.translatable("message.lc_ftb_hook.war_active", warName)
                     .withStyle(ChatFormatting.GRAY));
             wroteAnything = true;
@@ -64,25 +57,17 @@ public final class UpkeepMessageBuilder {
         boolean wroteAnything = false;
 
         if (!suspended.isEmpty()) {
-            msg.append(Component.literal("⚠ ")
-                    .withStyle(ChatFormatting.RED))
-                    .append(Component.translatable("message.lc_ftb_hook.suspension_header", suspended.size())
-                            .withStyle(ChatFormatting.RED, ChatFormatting.BOLD));
-            appendProtectionList(msg, suspended, ChatFormatting.YELLOW);
+            msg.append(Component.translatable("message.lc_ftb_hook.suspension_header", suspended.size())
+                    .withStyle(ChatFormatting.YELLOW));
+            appendProtectionList(msg, suspended, ChatFormatting.WHITE);
             wroteAnything = true;
         }
 
         if (warsSuspended) {
-            if (wroteAnything) {
-                msg.append("\n");
-                msg.append(Component.literal("  ").withStyle(ChatFormatting.DARK_GRAY));
-                msg.append(Component.translatable("message.lc_ftb_hook.suspension_wars").withStyle(ChatFormatting.GOLD));
-            } else {
-                msg.append(Component.literal("⚠ ")
-                        .withStyle(ChatFormatting.RED))
-                        .append(Component.translatable("message.lc_ftb_hook.suspension_wars_header")
-                                .withStyle(ChatFormatting.RED, ChatFormatting.BOLD));
-            }
+            if (wroteAnything) msg.append("\n");
+            msg.append(Component.translatable(
+                    wroteAnything ? "message.lc_ftb_hook.suspension_wars" : "message.lc_ftb_hook.suspension_wars_header"
+            ).withStyle(ChatFormatting.YELLOW));
             wroteAnything = true;
         }
 

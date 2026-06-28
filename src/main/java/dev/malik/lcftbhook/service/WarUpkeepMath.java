@@ -92,12 +92,29 @@ public final class WarUpkeepMath {
 
 
 
-    /** Outgoing war term at 0-based index {@code n}. */
+    public static double warOutgoingMultiplier() {
+        return LCFtbHookConfig.SERVER.warOutgoingCostMultiplier.get();
+    }
 
+    /**
+     * Flat outgoing war cost: {@code targetBase * warOutgoingCostMultiplier}.
+     * The same cost applies regardless of how many wars are already declared.
+     */
+    public static long outgoingWarCostCopper(long targetBaseCopper) {
+        if (targetBaseCopper <= 0L) {
+            return 0L;
+        }
+        double result = targetBaseCopper * warOutgoingMultiplier();
+        if (!Double.isFinite(result) || result >= Long.MAX_VALUE) {
+            return Long.MAX_VALUE;
+        }
+        return (long) Math.floor(result);
+    }
+
+    /** @deprecated Use {@link #outgoingWarCostCopper(long)} — outgoing cost is now flat. */
+    @Deprecated
     public static long outgoingWarTermCopper(long targetBaseCopper, int n) {
-
-        return ordinalWarTermCopper(targetBaseCopper, n, warExponent());
-
+        return outgoingWarCostCopper(targetBaseCopper);
     }
 
 

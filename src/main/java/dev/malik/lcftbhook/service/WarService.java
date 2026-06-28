@@ -134,14 +134,11 @@ public final class WarService {
 
         Set<UUID> targets = savedData.getWarTargets(team.getTeamId());
         long outgoing = 0L;
-        List<UUID> outgoingOrder = new ArrayList<>(targets);
-        outgoingOrder.sort(Comparator.comparing(UUID::toString));
-        int index = 0;
-        for (UUID targetId : outgoingOrder) {
+        for (UUID targetId : targets) {
             Team target = FtbTeamCatalog.resolve(server, targetId);
             if (target != null && isClaimTeam(server, target)) {
                 long targetBase = baseUpkeepCopper(server, target, savedData.getPendingState(targetId));
-                outgoing += WarUpkeepMath.outgoingWarTermCopper(targetBase, index++);
+                outgoing += WarUpkeepMath.outgoingWarCostCopper(targetBase);
             }
         }
 
@@ -241,12 +238,11 @@ public final class WarService {
         targets.sort(Comparator.comparing(UUID::toString));
 
         java.util.Map<UUID, Long> costByTarget = new java.util.HashMap<>();
-        int index = 0;
         for (UUID targetId : targets) {
             Team target = FtbTeamCatalog.resolve(server, targetId);
             long cost = target == null
                     ? 0L
-                    : WarUpkeepMath.outgoingWarTermCopper(baseUpkeepCopper(server, target), index++);
+                    : WarUpkeepMath.outgoingWarCostCopper(baseUpkeepCopper(server, target));
             costByTarget.put(targetId, cost);
         }
 
@@ -258,9 +254,7 @@ public final class WarService {
         if (!isEnabled()) {
             return 0L;
         }
-        FtbHookSavedData savedData = FtbHookSavedData.get(server);
-        int nextIndex = savedData.getWarTargets(declarer.getTeamId()).size();
-        return WarUpkeepMath.outgoingWarTermCopper(baseUpkeepCopper(server, target), nextIndex);
+        return WarUpkeepMath.outgoingWarCostCopper(baseUpkeepCopper(server, target));
     }
 
     public static boolean isWarEligibleTeam(MinecraftServer server, Team team) {
@@ -405,7 +399,7 @@ public final class WarService {
             views.add(opponentView(
                     target,
                     targetBase,
-                    WarUpkeepMath.outgoingWarTermCopper(targetBase, index++),
+                    WarUpkeepMath.outgoingWarCostCopper(targetBase),
                     status,
                     false
             ));
@@ -437,7 +431,7 @@ public final class WarService {
             views.add(opponentView(
                     target,
                     targetBase,
-                    WarUpkeepMath.outgoingWarTermCopper(targetBase, index++),
+                    WarUpkeepMath.outgoingWarCostCopper(targetBase),
                     status,
                     false
             ));

@@ -31,6 +31,7 @@ public final class LCFtbHookConfig {
         public final ModConfigSpec.LongValue blockEditProtectionPrice;
         public final ModConfigSpec.LongValue entityInteractProtectionPrice;
         public final ModConfigSpec.DoubleValue warCostMultiplier;
+        public final ModConfigSpec.DoubleValue warOutgoingCostMultiplier;
         public final ModConfigSpec.BooleanValue warEnabled;
         public final ModConfigSpec.ConfigValue<List<? extends String>> protectionDismantleOrderBuild;
         public final ModConfigSpec.ConfigValue<List<? extends String>> protectionDismantleOrderLand;
@@ -97,8 +98,12 @@ public final class LCFtbHookConfig {
                     .comment("Enable the war system. When false, war costs are ignored, war actions are blocked, and the war button is hidden on clients.")
                     .define("warEnabled", true);
 
+            warOutgoingCostMultiplier = builder
+                    .comment("Flat multiplier x for outgoing war cost. Declaring war on a team costs x * their base upkeep per period, regardless of how many wars you have declared.")
+                    .defineInRange("warOutgoingCostMultiplier", 2.0D, 0.0D, 100.0D);
+
             warCostMultiplier = builder
-                    .comment("War upkeep exponent l. With base upkeep b and k incoming wars, incoming terms are b*l^n for n=0..k-1 (first war uses multiplier 1). Each outgoing war at 0-based index n costs target base upkeep * l^n.")
+                    .comment("Incoming war exponent l. With base upkeep b and k incoming wars, the incoming surcharge is b * sum(l^n for n=0..k-1). First incoming war uses l^0 = 1.")
                     .defineInRange("warCostMultiplier", 1.2D, 1.0D, 100.0D);
 
             builder.pop();
