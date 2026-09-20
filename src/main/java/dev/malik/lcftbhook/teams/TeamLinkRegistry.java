@@ -82,10 +82,6 @@ public final class TeamLinkRegistry {
         return TeamAPI.getApi().GetTeam(false, lcTeamId);
     }
 
-    public static boolean isOrphanedLink(MinecraftServer server, FtbHookSavedData.TeamLinkEntry entry) {
-        return findActiveFtbParty(server, entry.ftbTeamId()) == null;
-    }
-
     public static boolean isLinkedToActiveFtbParty(MinecraftServer server, long lcTeamId) {
         FtbHookSavedData.TeamLinkEntry entry = findByLcTeamId(server, lcTeamId);
         if (entry == null) {
@@ -130,12 +126,6 @@ public final class TeamLinkRegistry {
                     lcTeamId,
                     entry.ftbTeamId()
             );
-        }
-    }
-
-    public static void unlinkFtbParty(MinecraftServer server, UUID ftbTeamId) {
-        if (FtbHookSavedData.get(server).clearLcTeamLink(ftbTeamId)) {
-            LCFtbHook.LOGGER.info("Removed LC link for FTB team {}", ftbTeamId);
         }
     }
 

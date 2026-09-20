@@ -16,10 +16,6 @@ public final class FreeChunkAllowance {
         }
     }
 
-    public static int billableChunkCount(int claimedChunks) {
-        return Math.max(0, claimedChunks - allowance());
-    }
-
     public static boolean isClaimFree(int currentClaimedChunks) {
         return currentClaimedChunks < allowance();
     }

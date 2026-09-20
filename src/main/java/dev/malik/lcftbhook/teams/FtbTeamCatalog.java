@@ -3,9 +3,6 @@ package dev.malik.lcftbhook.teams;
 import dev.ftb.mods.ftbteams.api.FTBTeamsAPI;
 import dev.ftb.mods.ftbteams.api.Team;
 import dev.ftb.mods.ftbteams.api.TeamManager;
-import dev.malik.lcftbhook.LCFtbHook;
-import dev.malik.lcftbhook.data.FtbHookSavedData;
-import dev.malik.lcftbhook.data.TeamPendingState;
 import dev.malik.lcftbhook.service.WarService;
 import net.minecraft.server.MinecraftServer;
 
@@ -52,10 +49,6 @@ public final class FtbTeamCatalog {
 
     public static boolean isActiveParty(MinecraftServer server, @Nullable Team team) {
         return kindOf(server, team) == TeamKind.ACTIVE_PARTY;
-    }
-
-    public static boolean isInactiveParty(MinecraftServer server, @Nullable Team team) {
-        return kindOf(server, team) == TeamKind.INACTIVE_PARTY;
     }
 
     /** Teams that participate in war, upkeep, and other mod features. */
@@ -120,16 +113,6 @@ public final class FtbTeamCatalog {
         return tracked;
     }
 
-    public static List<Team> singlePlayerTeams(MinecraftServer server) {
-        List<Team> singles = new ArrayList<>();
-        for (Team team : allStoredTeams(server)) {
-            if (isSinglePlayerTeam(team)) {
-                singles.add(team);
-            }
-        }
-        return singles;
-    }
-
     public static List<Team> activeParties(MinecraftServer server) {
         List<Team> parties = new ArrayList<>();
         for (Team team : allStoredTeams(server)) {
@@ -147,21 +130,4 @@ public final class FtbTeamCatalog {
         WarService.cleanupTeamWars(server, teamId);
     }
 
-    /**
-     * Cleans up mod state when an FTB team is deleted or its saved link is reconciled away.
-     */
-    public static void onTeamDeleted(MinecraftServer server, UUID teamId) {
-        if (server == null || teamId == null) {
-            return;
-        }
-
-        dissolveWarLinks(server, teamId);
-
-        FtbHookSavedData savedData = FtbHookSavedData.get(server);
-        if (!savedData.getPendingState(teamId).isEmpty()) {
-            savedData.setPendingState(teamId, new TeamPendingState());
-        }
-
-        LCFtbHook.LOGGER.debug("Processed team deletion cleanup for {}", teamId);
-    }
 }

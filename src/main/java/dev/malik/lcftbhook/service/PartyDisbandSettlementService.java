@@ -78,7 +78,7 @@ public final class PartyDisbandSettlementService {
                 CommandSourceStack source = server.createCommandSourceStack().withSuppressedOutput();
                 claimedChunks = chunkData.getClaimedChunks().size();
                 unclaimedChunks = ClaimSettlementHelper.unclaimAll(chunkData, source);
-                refundCopper = (long) FreeChunkAllowance.billableChunkCount(claimedChunks) * ClaimSettlementHelper.refundPerChunk();
+                refundCopper = ClaimSettlementHelper.refundForFullUnclaim(claimedChunks);
             }
 
             if (teamAccount.getMoneyStorage().isEmpty() && unclaimedChunks == 0) {

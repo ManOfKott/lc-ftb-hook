@@ -14,13 +14,14 @@ public final class ClaimSettlementHelper {
     private ClaimSettlementHelper() {
     }
 
-    public static long refundPerChunk() {
-        long claimPrice = LCFtbHookConfig.SERVER.claimPrice.get();
+    /** Total refund for unclaiming ALL {@code claimedChunksBeforeUnclaim} chunks a team/player currently holds, summed per-chunk over whichever price tiers those chunks actually fall into (see {@link ClaimPricingService}), then the usual refund ratio applied once to the total. */
+    public static long refundForFullUnclaim(int claimedChunksBeforeUnclaim) {
         double refundRatio = LCFtbHookConfig.SERVER.unclaimRefundRatio.get();
-        if (claimPrice <= 0 || refundRatio <= 0) {
+        if (refundRatio <= 0) {
             return 0;
         }
-        return (long) Math.floor(claimPrice * refundRatio);
+        long total = ClaimPricingService.sumPriceForRange(0, claimedChunksBeforeUnclaim);
+        return (long) Math.floor(total * refundRatio);
     }
 
     public static int unclaimAll(ChunkTeamData chunkData, CommandSourceStack source) {

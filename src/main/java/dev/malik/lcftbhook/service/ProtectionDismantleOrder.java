@@ -1,102 +1,37 @@
 package dev.malik.lcftbhook.service;
 
-import dev.ftb.mods.ftbteams.api.property.TeamProperty;
 import dev.malik.lcftbhook.config.LCFtbHookConfig;
-import dev.malik.lcftbhook.teams.LandProperties;
+import dev.malik.lcftbhook.data.FtbHookSavedData;
+import dev.malik.lcftbhook.data.ProtectionProperty;
+import net.minecraft.server.MinecraftServer;
 
 import java.util.ArrayList;
-import java.util.Collection;
-import java.util.Comparator;
-import java.util.HashMap;
+import java.util.Collections;
 import java.util.List;
-import java.util.Map;
+import java.util.UUID;
 
 /**
- * Configurable order in which protections are disabled when upkeep cannot be
- * paid, and the inverse order used when restoring them at upkeep.
+ * Configurable order in which a region's protections are disabled when
+ * upkeep cannot be paid, and the order regions themselves are dismantled in
+ * (top of the region list first, per the team's regionOrder).
  */
 public final class ProtectionDismantleOrder {
-    private static final List<String> DEFAULT_BUILD_ORDER = List.of(
-            "entity_interact_mode",
-            "block_edit_mode",
-            "block_interact_mode",
-            "allow_mob_griefing",
-            "allow_explosions",
-            "allow_pvp"
-    );
-
-    private static final List<String> DEFAULT_LAND_ORDER = List.of(
-            "land_block_edit_mode",
-            "land_block_interact_mode"
-    );
-
     private ProtectionDismantleOrder() {
     }
 
-    public static List<TeamProperty<?>> buildOrder() {
-        return resolveOrder(LCFtbHookConfig.SERVER.protectionDismantleOrderBuild.get(),
-                DEFAULT_BUILD_ORDER, ProtectionPricing.BUILD_PROTECTION_PROPERTIES);
+    public record DismantleStep(UUID regionId, ProtectionProperty property) {
     }
 
-    public static List<TeamProperty<?>> landOrder() {
-        return resolveOrder(LCFtbHookConfig.SERVER.protectionDismantleOrderLand.get(),
-                DEFAULT_LAND_ORDER, LandProperties.ALL);
-    }
-
-    public static List<TeamProperty<?>> fullDismantleOrder() {
-        // Land protections are stripped first; build protections after.
-        // Deduplicate so a property that appears in both configured lists
-        // is only processed once.
-        List<TeamProperty<?>> order = new ArrayList<>(landOrder());
-        for (TeamProperty<?> p : buildOrder()) {
-            if (!order.contains(p)) {
-                order.add(p);
-            }
-        }
-        return order;
-    }
-
-    public static List<TeamProperty<?>> restoreOrder() {
-        List<TeamProperty<?>> order = new ArrayList<>(fullDismantleOrder());
-        java.util.Collections.reverse(order);
-        return order;
-    }
-
-    public static int dismantleIndex(TeamProperty<?> property) {
-        List<TeamProperty<?>> order = fullDismantleOrder();
-        for (int i = 0; i < order.size(); i++) {
-            if (order.get(i).equals(property)) {
-                return i;
-            }
-        }
-        return -1;
-    }
-
-    public static Comparator<String> restorePropertyKeyComparator() {
-        Map<String, Integer> index = new HashMap<>();
-        List<TeamProperty<?>> restore = restoreOrder();
-        for (int i = 0; i < restore.size(); i++) {
-            index.put(ProtectionPricing.propertyKey(restore.get(i)), i);
-        }
-        return Comparator.comparingInt(key -> index.getOrDefault(key, Integer.MAX_VALUE));
-    }
-
-    private static List<TeamProperty<?>> resolveOrder(
-            List<? extends String> configured,
-            List<String> defaults,
-            Collection<? extends TeamProperty<?>> allowedFallback
-    ) {
-        List<String> keys = configured.isEmpty() ? defaults : new ArrayList<>(configured);
-        List<TeamProperty<?>> resolved = new ArrayList<>();
-        for (String key : keys) {
-            TeamProperty<?> property = findProperty(key);
+    public static List<ProtectionProperty> propertyOrder() {
+        List<? extends String> configured = LCFtbHookConfig.SERVER.protectionDismantleOrder.get();
+        List<ProtectionProperty> resolved = new ArrayList<>();
+        for (String id : configured) {
+            ProtectionProperty property = tryResolve(id);
             if (property != null && !resolved.contains(property)) {
                 resolved.add(property);
             }
         }
-        // Fill in any properties from the allowed set that aren't explicitly
-        // listed — this prevents cross-contamination between build and land lists.
-        for (TeamProperty<?> property : allowedFallback) {
+        for (ProtectionProperty property : ProtectionProperty.values()) {
             if (!resolved.contains(property)) {
                 resolved.add(property);
             }
@@ -104,12 +39,30 @@ public final class ProtectionDismantleOrder {
         return resolved;
     }
 
-    private static TeamProperty<?> findProperty(String key) {
-        for (TeamProperty<?> property : ProtectionPricing.PROTECTION_PROPERTIES) {
-            if (ProtectionPricing.propertyKey(property).equals(key)) {
-                return property;
+    /** Outer loop: team region order (index 0 dismantled first). Inner loop: {@link #propertyOrder()}. */
+    public static List<DismantleStep> fullDismantleOrder(MinecraftServer server, UUID teamId) {
+        FtbHookSavedData savedData = FtbHookSavedData.get(server);
+        List<ProtectionProperty> properties = propertyOrder();
+        List<DismantleStep> steps = new ArrayList<>();
+        for (UUID regionId : savedData.getRegionOrder(teamId)) {
+            for (ProtectionProperty property : properties) {
+                steps.add(new DismantleStep(regionId, property));
             }
         }
-        return null;
+        return steps;
+    }
+
+    public static List<DismantleStep> restoreOrder(MinecraftServer server, UUID teamId) {
+        List<DismantleStep> order = new ArrayList<>(fullDismantleOrder(server, teamId));
+        Collections.reverse(order);
+        return order;
+    }
+
+    private static ProtectionProperty tryResolve(String id) {
+        try {
+            return ProtectionProperty.byId(id);
+        } catch (IllegalArgumentException e) {
+            return null;
+        }
     }
 }

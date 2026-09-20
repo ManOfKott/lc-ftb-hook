@@ -1,21 +1,19 @@
 package dev.malik.lcftbhook.client;
 
 import dev.ftb.mods.ftbchunks.client.map.MapManager;
-import dev.malik.lcftbhook.service.ProtectionPriceDisplay;
-import dev.malik.lcftbhook.service.ProtectionPricing;
-import dev.ftb.mods.ftbteams.api.property.TeamProperty;
+import dev.malik.lcftbhook.data.ProtectionProperty;
+import dev.malik.lcftbhook.data.RegionPropertyKey;
 
 import javax.annotation.Nullable;
 import java.util.Map;
-import java.util.Objects;
 import java.util.Set;
+import java.util.UUID;
 
 public final class ClientPendingState {
     private static Map<String, String> pendingProperties = Map.of();
     private static Set<String> pendingForceLoads = Set.of();
     private static Set<String> pendingForceUnloads = Set.of();
-    private static Set<String> pendingLandChunks = Set.of();
-    private static Set<String> pendingBuildChunks = Set.of();
+    private static Map<String, UUID> pendingRegionAssignments = Map.of();
 
     private ClientPendingState() {
     }
@@ -24,62 +22,13 @@ public final class ClientPendingState {
             Map<String, String> properties,
             Set<String> forceLoads,
             Set<String> forceUnloads,
-            Set<String> landChunks,
-            Set<String> buildChunks
+            Map<String, UUID> regionAssignments
     ) {
         pendingProperties = Map.copyOf(properties);
         pendingForceLoads = Set.copyOf(forceLoads);
         pendingForceUnloads = Set.copyOf(forceUnloads);
-        pendingLandChunks = Set.copyOf(landChunks);
-        pendingBuildChunks = Set.copyOf(buildChunks);
+        pendingRegionAssignments = Map.copyOf(regionAssignments);
         MapManager.getInstance().ifPresent(manager -> manager.updateAllRegions(false));
-    }
-
-    public static boolean hasPendingProperty(String propertyId) {
-        return resolvePendingPropertyKey(propertyId) != null;
-    }
-
-    public static boolean hasVisiblePendingProperty(String propertyId, Object currentValue) {
-        if (!hasPendingProperty(propertyId)) {
-            return false;
-        }
-        return !Objects.equals(currentValue, getDisplayValue(propertyId, currentValue));
-    }
-
-    @Nullable
-    public static String resolvePendingPropertyKey(String propertyId) {
-        String normalized = ProtectionPriceDisplay.normalizePropertyKey(propertyId);
-        if (normalized != null && pendingProperties.containsKey(normalized)) {
-            return normalized;
-        }
-
-        for (String pendingKey : pendingProperties.keySet()) {
-            if (matchesPendingPropertyKey(propertyId, normalized, pendingKey)) {
-                return pendingKey;
-            }
-        }
-
-        return null;
-    }
-
-    private static boolean matchesPendingPropertyKey(
-            String propertyId,
-            @Nullable String normalized,
-            String pendingKey
-    ) {
-        if (propertyId.equals(pendingKey) || pendingKey.equals(normalized)) {
-            return true;
-        }
-        if (propertyId.endsWith("." + pendingKey)) {
-            return true;
-        }
-        return false;
-    }
-
-    @Nullable
-    public static String getPendingProperty(String propertyId) {
-        String key = resolvePendingPropertyKey(propertyId);
-        return key == null ? null : pendingProperties.get(key);
     }
 
     public static boolean isPendingForceLoad(net.minecraft.resources.ResourceKey<net.minecraft.world.level.Level> dimension, int x, int z) {
@@ -90,55 +39,22 @@ public final class ClientPendingState {
         return pendingForceUnloads.contains(ChunkPosKeyClient.encode(dimension.location(), x, z));
     }
 
-    public static boolean isPendingLandChunk(net.minecraft.resources.ResourceKey<net.minecraft.world.level.Level> dimension, int x, int z) {
-        return pendingLandChunks.contains(ChunkPosKeyClient.encode(dimension.location(), x, z));
-    }
-
-    public static boolean isPendingBuildChunk(net.minecraft.resources.ResourceKey<net.minecraft.world.level.Level> dimension, int x, int z) {
-        return pendingBuildChunks.contains(ChunkPosKeyClient.encode(dimension.location(), x, z));
-    }
-
-    @SuppressWarnings("unchecked")
-    public static <T> T getDisplayValue(TeamProperty<T> property, T currentValue) {
-        String pending = getPendingProperty(ProtectionPricing.propertyKey(property));
-        if (pending == null) {
-            return currentValue;
-        }
-        return ProtectionPricing.deserializePropertyValue(property, pending, currentValue);
-    }
-
-    @SuppressWarnings({"unchecked", "rawtypes"})
-    public static Object getDisplayValue(String propertyId, Object currentValue) {
-        String pendingKey = resolvePendingPropertyKey(propertyId);
-        if (pendingKey == null) {
-            return currentValue;
-        }
-
-        TeamProperty property = findProperty(pendingKey);
-        if (property == null) {
-            return currentValue;
-        }
-
-        String pending = pendingProperties.get(pendingKey);
-        if (pending == null) {
-            return currentValue;
-        }
-        return ProtectionPricing.deserializePropertyValue(property, pending, currentValue);
+    public static boolean isPendingRegionAssignment(net.minecraft.resources.ResourceKey<net.minecraft.world.level.Level> dimension, int x, int z) {
+        return pendingRegionAssignments.containsKey(ChunkPosKeyClient.encode(dimension.location(), x, z));
     }
 
     @Nullable
-    private static TeamProperty<?> findProperty(String propertyId) {
-        String normalized = ProtectionPriceDisplay.normalizePropertyKey(propertyId);
-        if (normalized == null) {
-            return null;
-        }
+    public static UUID pendingRegionAssignmentTarget(net.minecraft.resources.ResourceKey<net.minecraft.world.level.Level> dimension, int x, int z) {
+        return pendingRegionAssignments.get(ChunkPosKeyClient.encode(dimension.location(), x, z));
+    }
 
-        for (TeamProperty<?> property : ProtectionPricing.PROTECTION_PROPERTIES) {
-            if (ProtectionPricing.propertyKey(property).equals(normalized)) {
-                return property;
-            }
-        }
-        return null;
+    @Nullable
+    public static String getPendingRegionProperty(UUID regionId, ProtectionProperty property) {
+        return pendingProperties.get(RegionPropertyKey.encode(regionId, property.id()));
+    }
+
+    public static boolean hasPendingRegionProperty(UUID regionId, ProtectionProperty property) {
+        return pendingProperties.containsKey(RegionPropertyKey.encode(regionId, property.id()));
     }
 
     private static final class ChunkPosKeyClient {

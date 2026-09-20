@@ -1,83 +1,95 @@
 package dev.malik.lcftbhook.service;
 
-import dev.ftb.mods.ftbchunks.api.FTBChunksProperties;
 import dev.ftb.mods.ftbteams.api.Team;
-import dev.ftb.mods.ftbteams.api.property.BooleanProperty;
-import dev.ftb.mods.ftbteams.api.property.PrivacyMode;
-import dev.ftb.mods.ftbteams.api.property.PrivacyProperty;
-import dev.ftb.mods.ftbteams.api.property.TeamProperty;
+import dev.malik.lcftbhook.data.FtbHookSavedData;
+import dev.malik.lcftbhook.data.ProtectionProperty;
+import dev.malik.lcftbhook.data.Region;
+import dev.malik.lcftbhook.data.RegionPropertyKey;
 import dev.malik.lcftbhook.data.TeamPendingState;
-import dev.malik.lcftbhook.teams.LandProperties;
 import net.minecraft.server.MinecraftServer;
 
 import java.util.HashMap;
 import java.util.Map;
+import java.util.UUID;
 
 /**
- * Suspends and restores protection settings via the shared pendingProperties
- * queue. Paused and user-queued protections use the same state.
+ * Suspends and restores a region's protection values via the shared
+ * pendingProperties queue. Region values ARE the live/enforced state (there
+ * is no separate external property system to fight anymore), so "suspend"
+ * means writing the minimum value directly into the region and remembering
+ * the value to restore later; "restore" writes it back.
  */
 public final class ProtectionRollbackService {
     private ProtectionRollbackService() {
     }
 
-    public static boolean isLiveProtectionBillable(Team team, TeamProperty<?> property) {
-        if (property instanceof BooleanProperty boolProp) {
-            return isBillableBoolean(boolProp, team.getProperty(boolProp));
-        }
-        if (property instanceof PrivacyProperty privacyProp) {
-            return team.getProperty(privacyProp) != PrivacyMode.PUBLIC;
-        }
-        return false;
+    public static boolean isLiveAtMinimum(FtbHookSavedData savedData, UUID teamId, UUID regionId, ProtectionProperty property) {
+        Region region = savedData.getRegion(teamId, regionId);
+        return region == null || region.isAtMinimum(property);
     }
 
-    public static boolean isLiveAtMinimum(Team team, TeamProperty<?> property) {
-        if (property instanceof BooleanProperty boolProp) {
-            return isLiveAtMinimumForBoolean(boolProp, team.getProperty(boolProp));
-        }
-        if (property instanceof PrivacyProperty privacyProp) {
-            return team.getProperty(privacyProp) == PrivacyMode.PUBLIC;
-        }
-        return true;
+    public static boolean isLiveProtectionBillable(FtbHookSavedData savedData, UUID teamId, UUID regionId, ProtectionProperty property) {
+        return !isLiveAtMinimum(savedData, teamId, regionId, property);
     }
 
-    private static boolean isLiveAtMinimumForBoolean(BooleanProperty boolProp, boolean value) {
-        if (boolProp == FTBChunksProperties.ALLOW_MOB_GRIEFING
-                || boolProp == FTBChunksProperties.ALLOW_EXPLOSIONS
-                || boolProp == FTBChunksProperties.ALLOW_PVP) {
-            return value;
+    public static boolean isDismantled(
+            FtbHookSavedData savedData,
+            UUID teamId,
+            UUID regionId,
+            ProtectionProperty property,
+            TeamPendingState pendingState
+    ) {
+        String key = RegionPropertyKey.encode(regionId, property.id());
+        String pendingValue = pendingState.pendingProperties().get(key);
+        if (pendingValue == null) {
+            return false;
         }
-        return false;
-    }
-
-    public static boolean isDismantled(Team team, TeamProperty<?> property, TeamPendingState pendingState) {
-        String key = ProtectionPricing.propertyKey(property);
-        return pendingState.hasPendingProperty(key) && isLiveAtMinimum(team, property);
-    }
-
-    public static boolean hasDismantledProtections(Team team, TeamPendingState pendingState) {
-        for (TeamProperty<?> property : ProtectionPricing.PROTECTION_PROPERTIES) {
-            if (isDismantled(team, property, pendingState)) {
-                return true;
-            }
+        // A genuine system-forced dismantle (suspendProtection) stores the
+        // value to RESTORE once affordable, which is never the minimum tier.
+        // If the pending value IS minimum, this is a normal user-queued
+        // change that reduces/disables the protection, not a dismantle.
+        if (property.isAtMinimum(pendingValue)) {
+            return false;
         }
-        return false;
+        return isLiveAtMinimum(savedData, teamId, regionId, property);
     }
 
-    public static boolean hasPendingApply(Team team, TeamProperty<?> property, TeamPendingState pendingState) {
-        String key = ProtectionPricing.propertyKey(property);
+    public static boolean hasPendingApply(
+            FtbHookSavedData savedData,
+            UUID teamId,
+            UUID regionId,
+            ProtectionProperty property,
+            TeamPendingState pendingState
+    ) {
+        String key = RegionPropertyKey.encode(regionId, property.id());
         String serialized = pendingState.pendingProperties().get(key);
         if (serialized == null) {
             return false;
         }
-        return !serialized.equals(ProtectionPricing.serializePropertyValue(property, team.getProperty(property)));
+        Region region = savedData.getRegion(teamId, regionId);
+        String liveValue = region != null ? region.propertyValue(property) : property.minimumSerialized();
+        return !serialized.equals(liveValue);
     }
 
-    public static Map<String, String> pricingProperties(Team team, TeamPendingState pendingState) {
+    /**
+     * Pending property entries that should count toward the currently-billed
+     * price: excludes entries whose region is already at minimum (those are
+     * dismantle-restore targets, unbilled until restored).
+     */
+    public static Map<String, String> pricingProperties(MinecraftServer server, Team team, TeamPendingState pendingState) {
+        FtbHookSavedData savedData = FtbHookSavedData.get(server);
+        UUID teamId = team.getTeamId();
         Map<String, String> pricing = new HashMap<>();
         for (var entry : pendingState.pendingProperties().entrySet()) {
-            TeamProperty<?> property = propertyForKey(entry.getKey());
-            if (property != null && !isLiveAtMinimum(team, property)) {
+            UUID regionId = RegionPropertyKey.regionId(entry.getKey());
+            String propertyId = RegionPropertyKey.propertyId(entry.getKey());
+            ProtectionProperty property;
+            try {
+                property = ProtectionProperty.byId(propertyId);
+            } catch (IllegalArgumentException e) {
+                continue;
+            }
+            if (!isLiveAtMinimum(savedData, teamId, regionId, property)) {
                 pricing.put(entry.getKey(), entry.getValue());
             }
         }
@@ -85,12 +97,14 @@ public final class ProtectionRollbackService {
     }
 
     public static Map<String, String> pricingWithAppliedPending(
+            MinecraftServer server,
             Team team,
             TeamPendingState pendingState,
-            TeamProperty<?> applyProperty
+            UUID regionId,
+            ProtectionProperty property
     ) {
-        Map<String, String> pricing = new HashMap<>(pricingProperties(team, pendingState));
-        String key = ProtectionPricing.propertyKey(applyProperty);
+        Map<String, String> pricing = new HashMap<>(pricingProperties(server, team, pendingState));
+        String key = RegionPropertyKey.encode(regionId, property.id());
         String serialized = pendingState.pendingProperties().get(key);
         if (serialized != null) {
             pricing.put(key, serialized);
@@ -101,112 +115,48 @@ public final class ProtectionRollbackService {
     public static TeamPendingState suspendProtection(
             MinecraftServer server,
             Team team,
-            TeamProperty<?> property,
+            UUID regionId,
+            ProtectionProperty property,
             TeamPendingState pendingState
     ) {
-        String key = ProtectionPricing.propertyKey(property);
+        FtbHookSavedData savedData = FtbHookSavedData.get(server);
+        UUID teamId = team.getTeamId();
+        String key = RegionPropertyKey.encode(regionId, property.id());
         TeamPendingState updated = pendingState;
+        Region region = savedData.getRegion(teamId, regionId);
+        if (region == null) {
+            region = Region.createDefault();
+        }
         if (!pendingState.hasPendingProperty(key)) {
-            String restoreValue = ProtectionPricing.serializePropertyValue(property, team.getProperty(property));
+            String restoreValue = region.propertyValue(property);
             updated = pendingState.withPendingProperty(key, restoreValue);
         }
-        applyLiveMinimum(team, property);
+        savedData.updateRegion(teamId, region.withoutProperty(property.id()));
         return updated;
     }
 
     public static TeamPendingState restoreProtection(
             MinecraftServer server,
             Team team,
-            TeamProperty<?> property,
+            UUID regionId,
+            ProtectionProperty property,
             TeamPendingState pendingState
     ) {
-        String key = ProtectionPricing.propertyKey(property);
+        FtbHookSavedData savedData = FtbHookSavedData.get(server);
+        UUID teamId = team.getTeamId();
+        String key = RegionPropertyKey.encode(regionId, property.id());
         String serialized = pendingState.pendingProperties().get(key);
         if (serialized == null) {
             return pendingState;
         }
-        applyPropertyValue(team, property, serialized);
+        Region region = savedData.getRegion(teamId, regionId);
+        if (region == null) {
+            region = Region.createDefault();
+        }
+        Region updatedRegion = property.isAtMinimum(serialized)
+                ? region.withoutProperty(property.id())
+                : region.withProperty(property.id(), serialized);
+        savedData.updateRegion(teamId, updatedRegion);
         return pendingState.withoutPendingProperty(key);
-    }
-
-    public static TeamProperty<?> propertyForKey(String key) {
-        for (TeamProperty<?> property : ProtectionPricing.PROTECTION_PROPERTIES) {
-            if (ProtectionPricing.propertyKey(property).equals(key)) {
-                return property;
-            }
-        }
-        if (LandProperties.LAND_BLOCK_INTERACT_MODE.getId().getPath().equals(key)) {
-            return LandProperties.LAND_BLOCK_INTERACT_MODE;
-        }
-        if (LandProperties.LAND_BLOCK_EDIT_MODE.getId().getPath().equals(key)) {
-            return LandProperties.LAND_BLOCK_EDIT_MODE;
-        }
-        return null;
-    }
-
-    private static boolean isBillableBoolean(BooleanProperty property, boolean value) {
-        if (property == FTBChunksProperties.ALLOW_MOB_GRIEFING
-                || property == FTBChunksProperties.ALLOW_EXPLOSIONS
-                || property == FTBChunksProperties.ALLOW_PVP) {
-            return !value;
-        }
-        return false;
-    }
-
-    public static boolean isSerializedMinimum(TeamProperty<?> property, String serialized) {
-        if (property instanceof BooleanProperty boolProp) {
-            boolean value = ProtectionPricing.deserializePropertyValue(
-                    boolProp,
-                    serialized,
-                    boolProp == FTBChunksProperties.ALLOW_MOB_GRIEFING
-                            || boolProp == FTBChunksProperties.ALLOW_EXPLOSIONS
-                            || boolProp == FTBChunksProperties.ALLOW_PVP
-            );
-            return isLiveAtMinimumForBoolean(boolProp, value);
-        }
-        if (property instanceof PrivacyProperty privacyProp) {
-            PrivacyMode value = ProtectionPricing.deserializePropertyValue(
-                    privacyProp,
-                    serialized,
-                    PrivacyMode.PUBLIC
-            );
-            return value == PrivacyMode.PUBLIC;
-        }
-        return true;
-    }
-
-    public static void revertLiveToMinimum(Team team, TeamProperty<?> property) {
-        applyLiveMinimum(team, property);
-    }
-
-    private static void applyLiveMinimum(Team team, TeamProperty<?> property) {
-        if (property instanceof BooleanProperty boolProp) {
-            if (boolProp == FTBChunksProperties.ALLOW_MOB_GRIEFING
-                    || boolProp == FTBChunksProperties.ALLOW_EXPLOSIONS
-                    || boolProp == FTBChunksProperties.ALLOW_PVP) {
-                setAndSync(team, boolProp, true);
-                return;
-            }
-        }
-        if (property instanceof PrivacyProperty privacyProp) {
-            setAndSync(team, privacyProp, PrivacyMode.PUBLIC);
-        }
-    }
-
-    @SuppressWarnings("unchecked")
-    private static <T> void applyPropertyValue(Team team, TeamProperty<?> property, String serialized) {
-        T value = ProtectionPricing.deserializePropertyValue(
-                (TeamProperty<T>) property,
-                serialized,
-                team.getProperty((TeamProperty<T>) property)
-        );
-        setAndSync(team, (TeamProperty<T>) property, value);
-    }
-
-    private static <T> void setAndSync(Team team, TeamProperty<T> property, T value) {
-        ProtectionService.runReverting(() -> {
-            team.setProperty(property, value);
-            team.syncOnePropertyToTeam(property, value);
-        });
     }
 }

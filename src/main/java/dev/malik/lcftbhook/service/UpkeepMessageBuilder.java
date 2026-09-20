@@ -1,7 +1,7 @@
 package dev.malik.lcftbhook.service;
 
-import dev.ftb.mods.ftbteams.api.property.TeamProperty;
 import dev.malik.lcftbhook.LCFtbHook;
+import dev.malik.lcftbhook.service.ProtectionDismantleOrder.DismantleStep;
 import dev.malik.lcftbhook.util.MoneyMessageUtil;
 import dev.malik.lcftbhook.util.MoneyUtil;
 import dev.malik.lcftbhook.util.UpkeepPeriodFormat;
@@ -20,7 +20,7 @@ public final class UpkeepMessageBuilder {
     private UpkeepMessageBuilder() {
     }
 
-    public static Component buildUnaffordableRestorationMessage(List<TeamProperty<?>> unaffordable) {
+    public static Component buildUnaffordableRestorationMessage(List<DismantleStep> unaffordable) {
         MutableComponent msg = Component.literal("⌛ ")
                 .withStyle(ChatFormatting.YELLOW)
                 .append(Component.translatable("message.lc_ftb_hook.unaffordable_restoration_header", unaffordable.size())
@@ -31,7 +31,7 @@ public final class UpkeepMessageBuilder {
         return msg;
     }
 
-    public static Component buildRestorationSummary(List<TeamProperty<?>> restored, List<String> restoredWarNames) {
+    public static Component buildRestorationSummary(List<DismantleStep> restored, List<String> restoredWarNames) {
         MutableComponent msg = Component.empty();
         boolean wroteAnything = false;
 
@@ -52,7 +52,7 @@ public final class UpkeepMessageBuilder {
         return msg;
     }
 
-    public static Component buildSuspensionSummary(List<TeamProperty<?>> suspended, boolean warsSuspended) {
+    public static Component buildSuspensionSummary(List<DismantleStep> suspended, boolean warsSuspended) {
         MutableComponent msg = Component.empty();
         boolean wroteAnything = false;
 
@@ -79,12 +79,11 @@ public final class UpkeepMessageBuilder {
         return msg;
     }
 
-    private static void appendProtectionList(MutableComponent msg, List<TeamProperty<?>> properties, ChatFormatting color) {
-        for (TeamProperty<?> property : properties) {
+    private static void appendProtectionList(MutableComponent msg, List<DismantleStep> steps, ChatFormatting color) {
+        for (DismantleStep step : steps) {
             msg.append("\n");
             msg.append(Component.literal("  • ").withStyle(ChatFormatting.DARK_GRAY));
-            String labelKey = "message.lc_ftb_hook.upkeep_priority.protection."
-                    + ProtectionPricing.propertyKey(property);
+            String labelKey = "message.lc_ftb_hook.upkeep_priority.protection." + step.property().id();
             msg.append(Component.translatable(labelKey).withStyle(color));
         }
     }
@@ -100,7 +99,7 @@ public final class UpkeepMessageBuilder {
         return message;
     }
 
-    public static Component buildDetails(UpkeepBreakdown breakdown) {
+    public static Component buildDetails(UpkeepBreakdown breakdown, int minutesUntilNextUpkeep) {
         MutableComponent message = Component.empty();
 
         message.append(Component.translatable("message.lc_ftb_hook.upkeep_detail.header")
@@ -109,6 +108,10 @@ public final class UpkeepMessageBuilder {
 
         appendLine(message, "message.lc_ftb_hook.upkeep_detail.period",
                 styled(UpkeepPeriodFormat.format(breakdown.periodMinutes()), ChatFormatting.AQUA));
+        message.append("\n");
+
+        appendLine(message, "message.lc_ftb_hook.upkeep_detail.next_payment",
+                styled(nextPaymentValueText(minutesUntilNextUpkeep), ChatFormatting.AQUA));
         message.append("\n");
 
         if (breakdown.chunkCount() > 0) {
@@ -121,35 +124,8 @@ public final class UpkeepMessageBuilder {
                     Component.literal(String.valueOf(breakdown.forceLoadCount())).withStyle(ChatFormatting.GREEN));
         }
 
-        appendProtectionSection(message,
-                "message.lc_ftb_hook.upkeep_detail.build_heading",
-                breakdown.buildProtectionLines(),
-                breakdown.buildBasePrice(),
-                breakdown.buildUnits(),
-                breakdown.buildProtectionCopper(),
-                "message.lc_ftb_hook.upkeep_detail.build_formula",
-                false,
-                1);
-
-        appendProtectionSection(message,
-                "message.lc_ftb_hook.upkeep_detail.land_heading",
-                breakdown.landProtectionLines(),
-                breakdown.landBasePrice(),
-                breakdown.landUnits(),
-                breakdown.landProtectionCopper(),
-                "message.lc_ftb_hook.upkeep_detail.land_formula",
-                true,
-                ProtectionPricing.landChunkGroupSize());
-
-        if (breakdown.forceLoadCount() > 0 && breakdown.forceLoadCopper() > 0) {
-            message.append("\n");
-            message.append(formatFormula(
-                    "message.lc_ftb_hook.upkeep_detail.forceload_formula",
-                    MoneyMessageUtil.formatValue(MoneyUtil.fromCopper(breakdown.forceLoadUnitPrice())),
-                    breakdown.forceLoadCount(),
-                    MoneyMessageUtil.formatValue(MoneyUtil.fromCopper(breakdown.forceLoadCopper()))
-            ));
-            message.append("\n");
+        for (UpkeepBreakdown.RegionProtectionSection section : breakdown.regionSections()) {
+            appendRegionSection(message, section);
         }
 
         appendWarSection(message, breakdown);
@@ -163,66 +139,32 @@ public final class UpkeepMessageBuilder {
         return message;
     }
 
-    private static void appendProtectionSection(
-            MutableComponent message,
-            String headingKey,
-            java.util.List<UpkeepBreakdown.ProtectionLine> lines,
-            long basePrice,
-            int units,
-            long protectionCopper,
-            String formulaKey,
-            boolean landPricing,
-            int chunkGroupSize
-    ) {
-        if (lines.isEmpty() || protectionCopper <= 0 || units <= 0) {
+    private static void appendRegionSection(MutableComponent message, UpkeepBreakdown.RegionProtectionSection section) {
+        if (section.lines().isEmpty() || section.protectionCopper() <= 0 || section.billableChunks() <= 0) {
             return;
         }
 
         message.append("\n");
-        if (landPricing) {
-            message.append(Component.translatable(headingKey, chunkGroupSize).withStyle(ChatFormatting.YELLOW));
-        } else {
-            message.append(Component.translatable(headingKey).withStyle(ChatFormatting.YELLOW));
-        }
+        message.append(Component.literal(section.regionName()).withStyle(ChatFormatting.YELLOW, ChatFormatting.BOLD));
         message.append("\n");
 
-        for (UpkeepBreakdown.ProtectionLine line : lines) {
-            Component label = line.extraArg() == null
-                    ? Component.translatable(line.labelKey())
-                    : Component.translatable(line.labelKey(), line.extraArg());
+        for (UpkeepBreakdown.ProtectionLine line : section.lines()) {
             message.append(Component.literal("  • ").withStyle(ChatFormatting.DARK_GRAY));
-            message.append(styled(label, ChatFormatting.YELLOW));
+            message.append(styled(Component.translatable(line.labelKey()), ChatFormatting.YELLOW));
             message.append(Component.literal(" +").withStyle(ChatFormatting.GRAY));
             message.append(MoneyMessageUtil.formatValue(MoneyUtil.fromCopper(line.pricePerChunk()))
                     .copy().withStyle(ChatFormatting.GOLD));
-            if (landPricing) {
-                message.append(Component.translatable(
-                        "gui.lc_ftb_hook.protection_price_per_n_chunks_suffix",
-                        chunkGroupSize
-                ).withStyle(ChatFormatting.GOLD));
-            } else {
-                message.append(Component.translatable("gui.lc_ftb_hook.protection_price_per_chunk_suffix")
-                        .withStyle(ChatFormatting.GOLD));
-            }
+            message.append(Component.translatable("gui.lc_ftb_hook.protection_price_per_chunk_suffix")
+                    .withStyle(ChatFormatting.GOLD));
             message.append("\n");
         }
 
-        if (landPricing) {
-            message.append(formatLandFormula(
-                    formulaKey,
-                    MoneyMessageUtil.formatValue(MoneyUtil.fromCopper(basePrice)),
-                    units,
-                    MoneyMessageUtil.formatValue(MoneyUtil.fromCopper(protectionCopper)),
-                    chunkGroupSize
-            ));
-        } else {
-            message.append(formatFormula(
-                    formulaKey,
-                    MoneyMessageUtil.formatValue(MoneyUtil.fromCopper(basePrice)),
-                    units,
-                    MoneyMessageUtil.formatValue(MoneyUtil.fromCopper(protectionCopper))
-            ));
-        }
+        message.append(formatFormula(
+                "message.lc_ftb_hook.upkeep_detail.build_formula",
+                MoneyMessageUtil.formatValue(MoneyUtil.fromCopper(section.basePrice())),
+                section.billableChunks(),
+                MoneyMessageUtil.formatValue(MoneyUtil.fromCopper(section.protectionCopper()))
+        ));
         message.append("\n");
     }
 
@@ -304,7 +246,8 @@ public final class UpkeepMessageBuilder {
 
         for (UpkeepBreakdown.PendingProtectionLine line : breakdown.pendingProtections()) {
             message.append(Component.literal("  • ").withStyle(ChatFormatting.DARK_GRAY));
-            Component label = Component.translatable(line.labelKey());
+            Component label = Component.translatable(line.labelKey())
+                    .copy().append(Component.literal(" (" + line.regionName() + ")"));
             String messageKey = line.dismantled()
                     ? "message.lc_ftb_hook.upkeep_detail.pending_protection_dismantled"
                     : "message.lc_ftb_hook.upkeep_detail.pending_protection_queued";
@@ -341,20 +284,11 @@ public final class UpkeepMessageBuilder {
             message.append("\n");
         }
 
-        if (breakdown.pendingLandChunkCount() > 0) {
+        if (breakdown.pendingRegionAssignmentCount() > 0) {
             message.append(Component.literal("  • ").withStyle(ChatFormatting.DARK_GRAY));
             message.append(Component.translatable(
-                    "message.lc_ftb_hook.upkeep_detail.pending_land_chunks",
-                    breakdown.pendingLandChunkCount()
-            ).withStyle(ChatFormatting.GOLD));
-            message.append("\n");
-        }
-
-        if (breakdown.pendingBuildChunkCount() > 0) {
-            message.append(Component.literal("  • ").withStyle(ChatFormatting.DARK_GRAY));
-            message.append(Component.translatable(
-                    "message.lc_ftb_hook.upkeep_detail.pending_build_chunks",
-                    breakdown.pendingBuildChunkCount()
+                    "message.lc_ftb_hook.upkeep_detail.pending_region_assignments",
+                    breakdown.pendingRegionAssignmentCount()
             ).withStyle(ChatFormatting.GOLD));
             message.append("\n");
         }
@@ -385,18 +319,17 @@ public final class UpkeepMessageBuilder {
                 .withStyle(ChatFormatting.GRAY);
     }
 
-    private static Component formatLandFormula(
-            String key,
-            Component unitPrice,
-            int groups,
-            Component subtotal,
-            int chunkGroupSize
-    ) {
-        return Component.translatable(key, unitPrice, groups, subtotal, chunkGroupSize)
-                .withStyle(ChatFormatting.GRAY);
-    }
-
     private static Component styled(Component component, ChatFormatting... formats) {
         return component.copy().withStyle(formats);
+    }
+
+    private static Component nextPaymentValueText(int minutesUntilNextUpkeep) {
+        if (minutesUntilNextUpkeep < 0) {
+            return Component.translatable("gui.lc_ftb_hook.regions.upkeep_value_unknown");
+        }
+        if (minutesUntilNextUpkeep == 0) {
+            return Component.translatable("gui.lc_ftb_hook.regions.upkeep_value_due_now");
+        }
+        return UpkeepPeriodFormat.format(minutesUntilNextUpkeep);
     }
 }

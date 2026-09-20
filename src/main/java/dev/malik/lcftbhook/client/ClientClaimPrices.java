@@ -28,6 +28,7 @@ public final class ClientClaimPrices {
     private static long claimPrice = -1L;
     private static long forceLoadUpkeepPrice = -1L;
     private static int upkeepPeriodMinutes = -1;
+    private static int minutesUntilNextUpkeep = -1;
     private static int freeChunks;
     private static int claimedChunks;
     private static long mobGriefProtectionPrice = -1L;
@@ -36,11 +37,17 @@ public final class ClientClaimPrices {
     private static long blockInteractProtectionPrice = -1L;
     private static long blockEditProtectionPrice = -1L;
     private static long entityInteractProtectionPrice = -1L;
-    private static int landChunkGroupSize = -1;
     private static boolean balanceSynced;
     private static boolean balanceEmpty = true;
     @Nullable
     private static String balanceText;
+    private static boolean privateBalanceEmpty = true;
+    @Nullable
+    private static String privateBalanceText;
+    private static boolean hasCountryBalance;
+    private static boolean countryBalanceEmpty = true;
+    @Nullable
+    private static String countryBalanceText;
     private static int lastUpdateTotalChunks = 1;
     private static Map<String, Integer> lastProblems = Map.of();
 
@@ -51,42 +58,53 @@ public final class ClientClaimPrices {
             long claim,
             long forceLoadUpkeep,
             int upkeepPeriod,
+            int minutesUntilNext,
             int free,
             int claimed,
             boolean syncedBalance,
             boolean emptyBalance,
             String balance,
+            boolean emptyPrivateBalance,
+            String privateBalance,
+            boolean countryBalanceAvailable,
+            boolean emptyCountryBalance,
+            String countryBalance,
             long mobGrief,
             long explosion,
             long pvpDisable,
             long blockInteract,
             long blockEdit,
-            long entityInteract,
-            int landGroupSize
+            long entityInteract
     ) {
         claimPrice = claim;
         forceLoadUpkeepPrice = forceLoadUpkeep;
         upkeepPeriodMinutes = upkeepPeriod;
+        minutesUntilNextUpkeep = minutesUntilNext;
         freeChunks = free;
         claimedChunks = claimed;
         balanceSynced = syncedBalance;
         balanceEmpty = emptyBalance;
         balanceText = balance;
+        privateBalanceEmpty = emptyPrivateBalance;
+        privateBalanceText = privateBalance;
+        hasCountryBalance = countryBalanceAvailable;
+        countryBalanceEmpty = emptyCountryBalance;
+        countryBalanceText = countryBalance;
         mobGriefProtectionPrice = mobGrief;
         explosionProtectionPrice = explosion;
         pvpDisablePrice = pvpDisable;
         blockInteractProtectionPrice = blockInteract;
         blockEditProtectionPrice = blockEdit;
         entityInteractProtectionPrice = entityInteract;
-        landChunkGroupSize = landGroupSize;
-    }
-
-    public static int landChunkGroupSize() {
-        return landChunkGroupSize > 0 ? landChunkGroupSize : 5;
     }
 
     public static int upkeepPeriodMinutes() {
         return upkeepPeriodMinutes;
+    }
+
+    /** -1 if not yet synced (server just started, or no sync has landed yet). */
+    public static int minutesUntilNextUpkeep() {
+        return minutesUntilNextUpkeep;
     }
 
     @Nullable
@@ -122,6 +140,51 @@ public final class ClientClaimPrices {
                 && blockInteractProtectionPrice >= 0L
                 && blockEditProtectionPrice >= 0L
                 && entityInteractProtectionPrice >= 0L;
+    }
+
+    /**
+     * @param showCtrlHint whether to append the "Hold Ctrl to see more" tip -
+     *                      only accurate where a Ctrl-hold overlay actually
+     *                      still exists (FTB Chunks' own claim manager); Xaero's
+     *                      World Map marketplace colors are always-on now, so
+     *                      it should pass false there.
+     */
+    public static java.util.List<Component> moneyLines(boolean showCtrlHint) {
+        if (!isSynced()) {
+            return java.util.List.of();
+        }
+        java.util.List<Component> lines = new java.util.ArrayList<>();
+        lines.add(styledLabel("claim").append(" ").append(styledValue(formatEffectiveClaimPrice())));
+        lines.add(styledLabel("private_balance").append(" ").append(styledValue(formatPrivateBalance())));
+        // Only shown for officers/the owner of an actual party - a solo
+        // player's "team" is just their own personal account, which is
+        // already covered by the private balance line above, so a second
+        // (identical) line would be pointless there.
+        if (hasCountryBalance) {
+            lines.add(styledLabel("country_balance").append(" ").append(styledValue(formatCountryBalance())));
+        }
+        // Own line for the label, since "Force-load upkeep <price> per <period>"
+        // together is wider than the panel and was spilling past its edge.
+        lines.add(styledLabel("upkeep"));
+        lines.add(styledValue(formatPrice(forceLoadUpkeepPrice))
+                .append(" ").append(Component.literal(formatUpkeepPeriod(upkeepPeriodMinutes).getString()).withStyle(net.minecraft.ChatFormatting.GRAY)));
+        if (showCtrlHint) {
+            // Two lines for the same reason as the upkeep split above - the
+            // full hint text is wider than the panel.
+            lines.add(Component.translatable("gui.lc_ftb_hook.label.ctrl_hint_line1")
+                    .withStyle(net.minecraft.ChatFormatting.GRAY, net.minecraft.ChatFormatting.ITALIC));
+            lines.add(Component.translatable("gui.lc_ftb_hook.label.ctrl_hint_line2")
+                    .withStyle(net.minecraft.ChatFormatting.GRAY, net.minecraft.ChatFormatting.ITALIC));
+        }
+        return lines;
+    }
+
+    private static MutableComponent styledLabel(String key) {
+        return label(key).copy().withStyle(net.minecraft.ChatFormatting.GRAY);
+    }
+
+    private static MutableComponent styledValue(Component value) {
+        return value.copy().withStyle(net.minecraft.ChatFormatting.GOLD);
     }
 
     public static boolean isSynced() {
@@ -237,6 +300,20 @@ public final class ClientClaimPrices {
             return Component.translatable("message.lc_ftb_hook.balance_empty");
         }
         return Component.literal(balanceText == null ? "" : balanceText);
+    }
+
+    private static Component formatPrivateBalance() {
+        if (privateBalanceEmpty) {
+            return Component.translatable("message.lc_ftb_hook.balance_empty");
+        }
+        return Component.literal(privateBalanceText == null ? "" : privateBalanceText);
+    }
+
+    private static Component formatCountryBalance() {
+        if (countryBalanceEmpty) {
+            return Component.translatable("message.lc_ftb_hook.balance_empty");
+        }
+        return Component.literal(countryBalanceText == null ? "" : countryBalanceText);
     }
 
     private static Component formatPrice(long amount) {

@@ -51,21 +51,24 @@ class TeamPendingStateTest {
     }
 
     @Test
-    void withPendingLandChunk_removesFromBuildPending() {
+    void withPendingRegionAssignment_reassigningOverwritesTarget() {
+        UUID regionA = UUID.randomUUID();
+        UUID regionB = UUID.randomUUID();
         TeamPendingState s = new TeamPendingState()
-                .withPendingBuildChunk(CHUNK_1)
-                .withPendingLandChunk(CHUNK_1);
-        assertTrue(s.isPendingLandChunk(CHUNK_1));
-        assertFalse(s.isPendingBuildChunk(CHUNK_1));
+                .withPendingRegionAssignment(CHUNK_1, regionA)
+                .withPendingRegionAssignment(CHUNK_1, regionB);
+        assertTrue(s.isPendingRegionAssignment(CHUNK_1));
+        assertEquals(regionB, s.pendingRegionAssignmentTarget(CHUNK_1));
     }
 
     @Test
-    void withPendingBuildChunk_removesFromLandPending() {
+    void withoutPendingRegionAssignment_clearsTarget() {
+        UUID regionA = UUID.randomUUID();
         TeamPendingState s = new TeamPendingState()
-                .withPendingLandChunk(CHUNK_1)
-                .withPendingBuildChunk(CHUNK_1);
-        assertTrue(s.isPendingBuildChunk(CHUNK_1));
-        assertFalse(s.isPendingLandChunk(CHUNK_1));
+                .withPendingRegionAssignment(CHUNK_1, regionA)
+                .withoutPendingRegionAssignment(CHUNK_1);
+        assertFalse(s.isPendingRegionAssignment(CHUNK_1));
+        assertTrue(s.isEmpty());
     }
 
     @Test

@@ -652,7 +652,7 @@ public class WarScreen extends BaseScreen {
                         this,
                         actionLabel,
                         declareAction
-                                ? WarIcons.SWORD
+                                ? WarIcons.ICON
                                 : Icons.CANCEL.withTint(NordColors.SNOW_STORM_1)
                 ) {
                     @Override

@@ -58,16 +58,6 @@ public final class WarUpkeepMath {
 
 
 
-    /** Incoming war copper for {@code k} declarers: {@code b * sum(i=0..k-1) l^i}. */
-
-    public static long incomingWarSurchargeCopper(long baseCopper, int incomingWarCount) {
-
-        return sumOrdinalIncomingTerms(baseCopper, incomingWarCount);
-
-    }
-
-
-
     /** Copper for war term {@code n} (0-based): {@code base * l^n}. The first war uses {@code n = 0} (multiplier 1). */
 
     public static long ordinalWarTermCopper(long baseCopper, int n, double l) {
@@ -110,14 +100,6 @@ public final class WarUpkeepMath {
         }
         return (long) Math.floor(result);
     }
-
-    /** @deprecated Use {@link #outgoingWarCostCopper(long)} — outgoing cost is now flat. */
-    @Deprecated
-    public static long outgoingWarTermCopper(long targetBaseCopper, int n) {
-        return outgoingWarCostCopper(targetBaseCopper);
-    }
-
-
 
     /**
 

@@ -3,17 +3,19 @@ package dev.malik.lcftbhook.mixin;
 import dev.ftb.mods.ftbchunks.client.gui.ChunkScreen;
 import dev.ftb.mods.ftbchunks.client.map.MapChunk;
 import dev.ftb.mods.ftblibrary.math.XZ;
+import dev.ftb.mods.ftblibrary.ui.ContextMenuItem;
+import dev.ftb.mods.ftblibrary.ui.Theme;
+import dev.ftb.mods.ftblibrary.ui.input.MouseButton;
+import dev.malik.lcftbhook.client.ChunkContextMenuBuilder;
+import dev.malik.lcftbhook.client.ChunkHoverState;
 import dev.malik.lcftbhook.client.ClientClaimPrices;
-import dev.malik.lcftbhook.data.ChunkPosKey;
 import dev.malik.lcftbhook.client.ChunkScreenPanelAltToggleAccess;
-import dev.malik.lcftbhook.network.ToggleChunkTypeBatchPayload;
-import dev.malik.lcftbhook.network.ToggleChunkTypePayload;
+import dev.malik.lcftbhook.client.ProtectionInfoLines;
+import dev.malik.lcftbhook.client.ProtectionInfoPanelRenderer;
+import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.network.chat.Component;
 import net.minecraft.network.chat.MutableComponent;
-import net.minecraft.resources.ResourceKey;
-import net.minecraft.world.level.Level;
-import net.neoforged.neoforge.network.PacketDistributor;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.Shadow;
 import org.spongepowered.asm.mixin.Unique;
@@ -22,6 +24,8 @@ import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.Redirect;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Set;
 
 @Mixin(targets = "dev.ftb.mods.ftbchunks.client.gui.ChunkScreenPanel", remap = false)
@@ -40,19 +44,6 @@ public class ChunkScreenPanelMixin implements ChunkScreenPanelAltToggleAccess {
 
     @Unique
     private static final ThreadLocal<Boolean> lcFtbHook$skipProblemCount = ThreadLocal.withInitial(() -> false);
-
-    @Redirect(
-            method = "drawBackground",
-            at = @At(
-                    value = "INVOKE",
-                    target = "Ldev/ftb/mods/ftbchunks/client/gui/ChunkScreenPanel$ChunkUpdateInfo;summary()Lnet/minecraft/network/chat/Component;"
-            )
-    )
-    private Component lcFtbHook$hideChunkModifiedSummary(
-            dev.ftb.mods.ftbchunks.client.gui.ChunkScreenPanel.ChunkUpdateInfo updateInfo
-    ) {
-        return Component.empty();
-    }
 
     @Redirect(
             method = "drawBackground",
@@ -94,6 +85,39 @@ public class ChunkScreenPanelMixin implements ChunkScreenPanelAltToggleAccess {
         ci.cancel();
     }
 
+    /**
+     * FTB's native {@code mouseReleased} unconditionally fires a claim
+     * (plain left) or unclaim (plain right) request for whatever drag/click
+     * built up in {@code selectedChunks}, then clears the selection. We want
+     * releasing a plain left- or right-drag/click to immediately open our
+     * context menu for the marked selection instead. Shift+drag (FTB's
+     * force-load/-unload shortcut) is left completely alone by checking
+     * {@code hasShiftDown()} here too.
+     */
+    @Redirect(method = "mouseReleased", at = @At(value = "INVOKE", target = "Ljava/util/Set;isEmpty()Z"), remap = false)
+    private boolean lcFtbHook$suppressAutoClaimUnclaim(Set<XZ> selection, MouseButton button) {
+        if (Screen.hasShiftDown()) {
+            return selection.isEmpty();
+        }
+        return true;
+    }
+
+    @Inject(method = "mouseReleased", at = @At("TAIL"), remap = false)
+    private void lcFtbHook$openMenuOnRelease(MouseButton button, CallbackInfo ci) {
+        if (Screen.hasShiftDown() || selectedChunks.isEmpty()) {
+            return;
+        }
+        List<XZ> positions = new ArrayList<>(selectedChunks);
+        selectedChunks.clear();
+        firstSelectedChunk = null;
+        lastButtonDragged = null;
+
+        List<ContextMenuItem> items = ChunkContextMenuBuilder.build(chunkScreen, positions);
+        if (!items.isEmpty()) {
+            chunkScreen.openContextMenu(items);
+        }
+    }
+
     @Override
     public void lcFtbHook$selectForAltToggle(XZ chunkPos) {
         if (selectedChunks.isEmpty()) {
@@ -102,27 +126,14 @@ public class ChunkScreenPanelMixin implements ChunkScreenPanelAltToggleAccess {
         selectedChunks.add(chunkPos);
     }
 
+    /**
+     * The old alt-click land/build toggle is superseded by the region
+     * assignment context menu (see plan A6/B2, not yet built here) - the
+     * selection accumulation stays harmless (just cleared) until that menu
+     * lands and calls {@link dev.malik.lcftbhook.network.RequestRegionAssignmentPayload} instead.
+     */
     @Override
     public void lcFtbHook$releaseAltToggleSelection() {
-        if (selectedChunks.isEmpty()) {
-            return;
-        }
-
-        ResourceKey<Level> dimension = chunkScreen.getDimension().dimension;
-        java.util.ArrayList<String> keys = new java.util.ArrayList<>();
-        for (XZ pos : Set.copyOf(selectedChunks)) {
-            MapChunk mapChunk = lcFtbHook$mapChunk(pos);
-            if (mapChunk != null && mapChunk.getClaimedDate().isPresent()) {
-                keys.add(ChunkPosKey.encode(dimension.location(), pos.x(), pos.z()));
-            }
-        }
-
-        if (keys.size() == 1) {
-            PacketDistributor.sendToServer(new ToggleChunkTypePayload(keys.getFirst()));
-        } else if (!keys.isEmpty()) {
-            PacketDistributor.sendToServer(new ToggleChunkTypeBatchPayload(keys));
-        }
-
         selectedChunks.clear();
         firstSelectedChunk = null;
         lastButtonDragged = null;
@@ -134,5 +145,44 @@ public class ChunkScreenPanelMixin implements ChunkScreenPanelAltToggleAccess {
                 .getRegion(XZ.regionFromChunk(pos.x(), pos.z()))
                 .getDataBlocking()
                 .getChunk(pos);
+    }
+
+    /**
+     * Draws the same fixed info panel Xaero's World Map shows, using
+     * whichever chunk button reported itself hovered LAST frame (marked in
+     * {@code ChunkScreenPanelChunkButtonMixin}), then resets the flag so this
+     * frame's children can mark the current one. Panel content is therefore
+     * one frame stale, which is imperceptible for a static info readout.
+     */
+    private static final int PANEL_Y = 8;
+    private static final int PANEL_WIDTH = 170;
+    private static final int PANEL_GAP = 14;
+
+    @Inject(method = "drawBackground", at = @At("HEAD"), remap = false)
+    private void lcFtbHook$drawAndResetHoverPanel(GuiGraphics graphics, Theme theme, int x, int y, int w, int h, CallbackInfo ci) {
+        // Positioned relative to the claim screen's own left edge (with a
+        // gap) rather than a fixed screen-absolute X, so it sits just
+        // outside the map window instead of overlapping it or crowding its
+        // edge, regardless of resolution/GUI scale.
+        int panelX = Math.max(8, x - PANEL_WIDTH - PANEL_GAP);
+        int cursorY = PANEL_Y;
+
+        var moneyContent = new ProtectionInfoLines.Content(dev.malik.lcftbhook.client.ClientClaimPrices.moneyLines(true), null);
+        int moneyHeight = ProtectionInfoPanelRenderer.height(moneyContent);
+        if (moneyHeight > 0) {
+            ProtectionInfoPanelRenderer.draw(graphics, moneyContent, panelX, cursorY, PANEL_WIDTH);
+            cursorY += moneyHeight + 4;
+        }
+
+        if (ChunkHoverState.isPresent()) {
+            MapChunk chunk = lcFtbHook$mapChunk(XZ.of(ChunkHoverState.chunkX(), ChunkHoverState.chunkZ()));
+            ProtectionInfoLines.Content content = ProtectionInfoLines.build(
+                    chunk, ChunkHoverState.dimension(), ChunkHoverState.chunkX(), ChunkHoverState.chunkZ()
+            );
+            if (ProtectionInfoPanelRenderer.height(content) > 0) {
+                ProtectionInfoPanelRenderer.draw(graphics, content, panelX, cursorY, PANEL_WIDTH);
+            }
+        }
+        ChunkHoverState.reset();
     }
 }

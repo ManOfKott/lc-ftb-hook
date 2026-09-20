@@ -1,63 +1,56 @@
 package dev.malik.lcftbhook.service;
 
 import dev.ftb.mods.ftbteams.api.Team;
-import dev.ftb.mods.ftbteams.api.property.PrivacyMode;
-import dev.ftb.mods.ftbteams.api.property.TeamProperty;
-import dev.ftb.mods.ftbteams.api.property.TeamPropertyCollection;
 import dev.malik.lcftbhook.config.LCFtbHookConfig;
+import dev.malik.lcftbhook.data.FtbHookSavedData;
+import dev.malik.lcftbhook.data.ProtectionProperty;
+import dev.malik.lcftbhook.data.Region;
+import dev.malik.lcftbhook.data.RegionPropertyKey;
 import dev.malik.lcftbhook.data.TeamPendingState;
 import dev.malik.lcftbhook.teams.FtbTeamCatalog;
-import dev.malik.lcftbhook.teams.LandProperties;
 import io.github.lightman314.lightmanscurrency.api.money.value.MoneyValue;
 import net.minecraft.server.MinecraftServer;
 
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Map;
 import java.util.UUID;
-
-import dev.ftb.mods.ftbchunks.api.FTBChunksProperties;
 
 public record UpkeepBreakdown(
         UUID teamId,
         MoneyValue totalCost,
         int periodMinutes,
         int chunkCount,
-        int buildBillableChunks,
-        int buildUnits,
-        int landBillableChunks,
-        int landUnits,
         int forceLoadCount,
-        long buildBasePrice,
-        long landBasePrice,
-        long buildProtectionCopper,
-        long landProtectionCopper,
-        long forceLoadCopper,
+        long protectionCopper,
         long baseUpkeepCopper,
         long incomingWarCopper,
         long outgoingWarCopper,
         int incomingWarCount,
         int outgoingWarCount,
-        List<ProtectionLine> buildProtectionLines,
-        List<ProtectionLine> landProtectionLines,
+        List<RegionProtectionSection> regionSections,
         List<WarLine> warLines,
         List<PendingProtectionLine> pendingProtections,
         List<PendingWarLine> pendingWars,
         int pendingForceLoadCount,
         int pendingForceUnloadCount,
-        int pendingLandChunkCount,
-        int pendingBuildChunkCount
+        int pendingRegionAssignmentCount
 ) {
-    public record ProtectionLine(String labelKey, long pricePerChunk, String extraArg) {
-        public ProtectionLine(String labelKey, long pricePerChunk) {
-            this(labelKey, pricePerChunk, null);
-        }
+    public record ProtectionLine(String labelKey, long pricePerChunk) {
+    }
+
+    public record RegionProtectionSection(
+            String regionName,
+            List<ProtectionLine> lines,
+            long basePrice,
+            int billableChunks,
+            long protectionCopper
+    ) {
     }
 
     public record WarLine(String displayName, long warCostCopper, boolean incoming) {
     }
 
-    public record PendingProtectionLine(String labelKey, String desiredValue, boolean dismantled) {
+    public record PendingProtectionLine(String labelKey, String regionName, String desiredValue, boolean dismantled) {
     }
 
     public record PendingWarLine(String displayName, boolean endWar) {
@@ -71,53 +64,52 @@ public record UpkeepBreakdown(
             TeamPendingState pendingState
     ) {
         int periodMinutes = LCFtbHookConfig.SERVER.upkeepPeriodMinutes.get();
-        TeamPropertyCollection properties = team.getProperties();
-        Map<String, String> noPending = Map.of();
+        FtbHookSavedData savedData = FtbHookSavedData.get(server);
+        UUID teamId = team.getTeamId();
         var chunkData = dev.ftb.mods.ftbchunks.api.FTBChunksAPI.api().getManager().getOrCreateData(team);
 
         ProtectionPricing.ChunkCounts counts = ProtectionPricing.countBillableChunks(server, team, chunkData, pendingState);
         WarService.WarCostBreakdown warCosts = WarService.calculateWarCosts(server, team);
 
-        long buildBase = ProtectionPricing.calculateBuildBasePrice(properties, noPending);
-        int buildUnits = counts.buildBillable();
-        long buildProtectionCopper = buildBase > 0 ? buildBase * buildUnits : 0L;
-
-        long landBase = ProtectionPricing.calculateLandBasePrice(properties, noPending);
-        int landUnits = ProtectionPricing.landChunkUnits(counts.landBillable());
-        long landProtectionCopper = landBase > 0 ? landBase * landUnits : 0L;
-
-        long forceLoadUnit = LCFtbHookConfig.SERVER.forceLoadUpkeepPrice.get();
-        long forceLoadCopper = forceLoadUnit > 0 && forceLoadCount > 0 ? forceLoadUnit * forceLoadCount : 0L;
+        List<RegionProtectionSection> sections = new ArrayList<>();
+        long totalProtectionCopper = 0L;
+        for (var rc : counts.perRegion().values()) {
+            if (rc.billableChunks() <= 0) {
+                continue;
+            }
+            Region region = savedData.getRegion(teamId, rc.regionId());
+            if (region == null) {
+                continue;
+            }
+            List<ProtectionLine> lines = collectProtectionLines(region);
+            if (lines.isEmpty()) {
+                continue;
+            }
+            long basePrice = ProtectionPricing.regionBasePrice(region, java.util.Map.of());
+            long copper = basePrice > 0 ? basePrice * rc.billableChunks() : 0L;
+            totalProtectionCopper += copper;
+            sections.add(new RegionProtectionSection(region.name(), lines, basePrice, rc.billableChunks(), copper));
+        }
 
         return new UpkeepBreakdown(
-                team.getTeamId(),
+                teamId,
                 totalCost,
                 periodMinutes,
                 counts.totalChunks(),
-                counts.buildBillable(),
-                buildUnits,
-                counts.landBillable(),
-                landUnits,
                 forceLoadCount,
-                buildBase,
-                landBase,
-                buildProtectionCopper,
-                landProtectionCopper,
-                forceLoadCopper,
+                totalProtectionCopper,
                 warCosts.baseUpkeepCopper(),
                 warCosts.incomingWarCopper(),
                 warCosts.outgoingWarCopper(),
                 warCosts.incomingWarCount(),
                 warCosts.outgoingWarCount(),
-                collectBuildProtectionLines(team),
-                collectLandProtectionLines(team),
+                sections,
                 collectWarLines(server, team),
-                collectPendingProtections(team, pendingState),
+                collectPendingProtections(server, teamId, pendingState),
                 collectPendingWars(server, team, pendingState),
                 pendingState.pendingForceLoads().size(),
                 pendingState.pendingForceUnloads().size(),
-                pendingState.pendingLandChunks().size(),
-                pendingState.pendingBuildChunks().size()
+                pendingState.pendingRegionAssignments().size()
         );
     }
 
@@ -126,8 +118,7 @@ public record UpkeepBreakdown(
                 || !pendingWars.isEmpty()
                 || pendingForceLoadCount > 0
                 || pendingForceUnloadCount > 0
-                || pendingLandChunkCount > 0
-                || pendingBuildChunkCount > 0;
+                || pendingRegionAssignmentCount > 0;
     }
 
     private static List<WarLine> collectWarLines(MinecraftServer server, Team team) {
@@ -141,58 +132,41 @@ public record UpkeepBreakdown(
         return lines;
     }
 
-    private static List<ProtectionLine> collectBuildProtectionLines(Team team) {
+    private static List<ProtectionLine> collectProtectionLines(Region region) {
         List<ProtectionLine> lines = new ArrayList<>();
-        var config = LCFtbHookConfig.SERVER;
-
-        if (!team.getProperty(FTBChunksProperties.ALLOW_MOB_GRIEFING)) {
-            lines.add(new ProtectionLine("message.lc_ftb_hook.upkeep_detail.mob_grief", config.mobGriefProtectionPrice.get()));
+        for (ProtectionProperty property : ProtectionProperty.values()) {
+            if (!region.isAtMinimum(property)) {
+                lines.add(new ProtectionLine(
+                        "message.lc_ftb_hook.upkeep_detail." + property.id(),
+                        property.configPrice()
+                ));
+            }
         }
-        if (!team.getProperty(FTBChunksProperties.ALLOW_EXPLOSIONS)) {
-            lines.add(new ProtectionLine("message.lc_ftb_hook.upkeep_detail.explosions", config.explosionProtectionPrice.get()));
-        }
-        if (!team.getProperty(FTBChunksProperties.ALLOW_PVP)) {
-            lines.add(new ProtectionLine("message.lc_ftb_hook.upkeep_detail.pvp", config.pvpDisablePrice.get()));
-        }
-        addPrivacyLine(lines, team.getProperty(FTBChunksProperties.BLOCK_INTERACT_MODE),
-                "message.lc_ftb_hook.upkeep_detail.block_interact", config.blockInteractProtectionPrice.get());
-        addPrivacyLine(lines, team.getProperty(FTBChunksProperties.BLOCK_EDIT_MODE),
-                "message.lc_ftb_hook.upkeep_detail.block_edit", config.blockEditProtectionPrice.get());
-        addPrivacyLine(lines, team.getProperty(FTBChunksProperties.ENTITY_INTERACT_MODE),
-                "message.lc_ftb_hook.upkeep_detail.entity_interact", config.entityInteractProtectionPrice.get());
         return lines;
     }
 
-    private static List<ProtectionLine> collectLandProtectionLines(Team team) {
-        List<ProtectionLine> lines = new ArrayList<>();
-        var config = LCFtbHookConfig.SERVER;
-
-        addPrivacyLine(lines, team.getProperty(LandProperties.LAND_BLOCK_INTERACT_MODE),
-                "message.lc_ftb_hook.upkeep_detail.block_interact", config.blockInteractProtectionPrice.get());
-        addPrivacyLine(lines, team.getProperty(LandProperties.LAND_BLOCK_EDIT_MODE),
-                "message.lc_ftb_hook.upkeep_detail.block_edit", config.blockEditProtectionPrice.get());
-        return lines;
-    }
-
-    private static void addPrivacyLine(List<ProtectionLine> lines, PrivacyMode mode, String labelKey, long price) {
-        if (mode != PrivacyMode.PUBLIC) {
-            lines.add(new ProtectionLine(labelKey, price, mode.name()));
-        }
-    }
-
-    private static List<PendingProtectionLine> collectPendingProtections(Team team, TeamPendingState pendingState) {
+    private static List<PendingProtectionLine> collectPendingProtections(
+            MinecraftServer server,
+            UUID teamId,
+            TeamPendingState pendingState
+    ) {
+        FtbHookSavedData savedData = FtbHookSavedData.get(server);
         List<PendingProtectionLine> lines = new ArrayList<>();
-        for (TeamProperty<?> property : ProtectionPricing.PROTECTION_PROPERTIES) {
-            String key = ProtectionPricing.propertyKey(property);
-            if (!pendingState.hasPendingProperty(key)) {
+        for (var entry : pendingState.pendingProperties().entrySet()) {
+            UUID regionId = RegionPropertyKey.regionId(entry.getKey());
+            ProtectionProperty property;
+            try {
+                property = ProtectionProperty.byId(RegionPropertyKey.propertyId(entry.getKey()));
+            } catch (IllegalArgumentException e) {
                 continue;
             }
-            String desiredValue = formatPendingPropertyValue(property, pendingState.pendingProperties().get(key));
-            String labelKey = "message.lc_ftb_hook.upkeep_priority.protection." + key;
-            if (ProtectionRollbackService.isDismantled(team, property, pendingState)) {
-                lines.add(new PendingProtectionLine(labelKey, desiredValue, true));
-            } else if (ProtectionRollbackService.hasPendingApply(team, property, pendingState)) {
-                lines.add(new PendingProtectionLine(labelKey, desiredValue, false));
+            Region region = savedData.getRegion(teamId, regionId);
+            String regionName = region != null ? region.name() : Region.DEFAULT_NAME;
+            String labelKey = "message.lc_ftb_hook.upkeep_priority.protection." + property.id();
+            if (ProtectionRollbackService.isDismantled(savedData, teamId, regionId, property, pendingState)) {
+                lines.add(new PendingProtectionLine(labelKey, regionName, entry.getValue(), true));
+            } else if (ProtectionRollbackService.hasPendingApply(savedData, teamId, regionId, property, pendingState)) {
+                lines.add(new PendingProtectionLine(labelKey, regionName, entry.getValue(), false));
             }
         }
         return lines;
@@ -216,26 +190,6 @@ public record UpkeepBreakdown(
     private static String resolveTeamName(MinecraftServer server, UUID teamId) {
         Team team = FtbTeamCatalog.resolve(server, teamId);
         return team != null ? WarService.displayName(team) : teamId.toString();
-    }
-
-    private static String formatPendingPropertyValue(TeamProperty<?> property, String serialized) {
-        if (property instanceof dev.ftb.mods.ftbteams.api.property.PrivacyProperty privacyProp) {
-            PrivacyMode mode = ProtectionPricing.deserializePropertyValue(
-                    privacyProp,
-                    serialized,
-                    PrivacyMode.PUBLIC
-            );
-            return mode.name();
-        }
-        if (property instanceof dev.ftb.mods.ftbteams.api.property.BooleanProperty boolProp) {
-            boolean value = ProtectionPricing.deserializePropertyValue(boolProp, serialized, true);
-            return String.valueOf(value);
-        }
-        return serialized;
-    }
-
-    public long forceLoadUnitPrice() {
-        return LCFtbHookConfig.SERVER.forceLoadUpkeepPrice.get();
     }
 
     public long totalWarCopper() {

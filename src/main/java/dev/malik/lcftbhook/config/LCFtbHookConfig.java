@@ -19,11 +19,17 @@ public final class LCFtbHookConfig {
 
     public static final class Server {
         public final ModConfigSpec.LongValue claimPrice;
+        public final ModConfigSpec.EnumValue<ClaimPricingMode> claimPricingMode;
+        public final ModConfigSpec.LongValue claimBasePrice;
+        public final ModConfigSpec.LongValue claimIncrementPrice;
+        public final ModConfigSpec.IntValue claimIncrementSize;
+        public final ModConfigSpec.DoubleValue claimPriceGrowthPercent;
         public final ModConfigSpec.IntValue freeChunks;
-        public final ModConfigSpec.IntValue landChunkGroupSize;
         public final ModConfigSpec.DoubleValue unclaimRefundRatio;
         public final ModConfigSpec.LongValue forceLoadUpkeepPrice;
         public final ModConfigSpec.IntValue upkeepPeriodMinutes;
+        public final ModConfigSpec.EnumValue<ForceLoadUpkeepMode> forceLoadUpkeepMode;
+        public final ModConfigSpec.EnumValue<ProtectionUpkeepMode> protectionUpkeepMode;
         public final ModConfigSpec.LongValue mobGriefProtectionPrice;
         public final ModConfigSpec.LongValue explosionProtectionPrice;
         public final ModConfigSpec.LongValue pvpDisablePrice;
@@ -33,24 +39,70 @@ public final class LCFtbHookConfig {
         public final ModConfigSpec.DoubleValue warCostMultiplier;
         public final ModConfigSpec.DoubleValue warOutgoingCostMultiplier;
         public final ModConfigSpec.BooleanValue warEnabled;
-        public final ModConfigSpec.ConfigValue<List<? extends String>> protectionDismantleOrderBuild;
-        public final ModConfigSpec.ConfigValue<List<? extends String>> protectionDismantleOrderLand;
+        public final ModConfigSpec.ConfigValue<List<? extends String>> protectionDismantleOrder;
         public final ModConfigSpec.BooleanValue debugTestTeamCommands;
 
         Server(ModConfigSpec.Builder builder) {
             builder.comment("LC FTB Hook server configuration").push("general");
 
             claimPrice = builder
-                    .comment("Cost in copper units (main coin chain) to claim one chunk. Default: 10000 copper = 1 Diamond coin.")
+                    .comment(
+                            "Only used when claimPricingMode = CONSTANT. Cost in copper units (main coin chain) to claim one chunk,",
+                            "the same for every claim regardless of how many the team already has. Default: 10000 copper = 1 Diamond coin."
+                    )
                     .defineInRange("claimPrice", 10_000L, 0L, Long.MAX_VALUE);
+
+            claimPricingMode = builder
+                    .comment(
+                            "How the price of a team's NEXT chunk claim scales with how many chunks they already have.",
+                            "The team's currently claimed chunk count (excluding any free-allowance chunks - see freeChunks",
+                            "below) determines which \"increment\" (price tier) the next claim falls into; unclaiming lowers",
+                            "the count and therefore the tier again, so the price a team pays always reflects their CURRENT",
+                            "chunk count, not a running total. Every increment always starts counting from 0.",
+                            "  CONSTANT    - flat price for every claim: price = claimPrice.",
+                            "  LINEAR      - price grows by a fixed amount every claimIncrementSize claims:",
+                            "                increment = floor(chunksAlreadyClaimed / claimIncrementSize)",
+                            "                price = claimBasePrice + increment * claimIncrementPrice",
+                            "  EXPONENTIAL - price grows by a fixed PERCENTAGE every claimIncrementSize claims:",
+                            "                increment = floor(chunksAlreadyClaimed / claimIncrementSize)",
+                            "                price = claimBasePrice * (1 + claimPriceGrowthPercent) ^ increment",
+                            "Both LINEAR and EXPONENTIAL can produce prices with fractional copper - those are always",
+                            "rounded DOWN to the nearest whole copper before being charged."
+                    )
+                    .defineEnum("claimPricingMode", ClaimPricingMode.EXPONENTIAL);
+
+            claimBasePrice = builder
+                    .comment(
+                            "Used by claimPricingMode = LINEAR and EXPONENTIAL only: the price of a claim at increment 0",
+                            "(a team's first claimIncrementSize chunks). Ignored under CONSTANT (see claimPrice instead)."
+                    )
+                    .defineInRange("claimBasePrice", 10_000L, 0L, Long.MAX_VALUE);
+
+            claimIncrementSize = builder
+                    .comment(
+                            "Used by claimPricingMode = LINEAR and EXPONENTIAL only: how many chunks make up one price tier",
+                            "(\"increment\"). Ignored under CONSTANT. Default: 20 (matches the default EXPONENTIAL 5% step)."
+                    )
+                    .defineInRange("claimIncrementSize", 20, 1, Integer.MAX_VALUE);
+
+            claimIncrementPrice = builder
+                    .comment(
+                            "Used by claimPricingMode = LINEAR only: how much copper the price goes up by per increment",
+                            "(every claimIncrementSize claims). Ignored by CONSTANT and EXPONENTIAL."
+                    )
+                    .defineInRange("claimIncrementPrice", 1_000L, 0L, Long.MAX_VALUE);
+
+            claimPriceGrowthPercent = builder
+                    .comment(
+                            "Used by claimPricingMode = EXPONENTIAL only: the fractional price increase per increment",
+                            "(every claimIncrementSize claims), e.g. 0.05 = +5% per increment, compounding. Ignored by",
+                            "CONSTANT and LINEAR. Default: 0.05 (5% every 20 claims)."
+                    )
+                    .defineInRange("claimPriceGrowthPercent", 0.05D, 0.0D, 1.0D);
 
             freeChunks = builder
                     .comment("The first N claimed chunks per team or player are free to claim and exempt from protection upkeep")
                     .defineInRange("freeChunks", 0, 0, Integer.MAX_VALUE);
-
-            landChunkGroupSize = builder
-                    .comment("Land chunks (state territory) pay the protection price once per group of this many chunks; the billable land chunk count is rounded up to the next full group (minimum 1 group when any land chunk is billable). Build chunks always pay per chunk. A value of 1 makes land cost the same as build.")
-                    .defineInRange("landChunkGroupSize", 5, 1, Integer.MAX_VALUE);
 
             unclaimRefundRatio = builder
                     .comment("Fraction of the claim price refunded when unclaiming a chunk (0 = none, 1 = full refund, 0.8 = 80%)")
@@ -63,6 +115,23 @@ public final class LCFtbHookConfig {
             upkeepPeriodMinutes = builder
                     .comment("How often upkeep is charged, in real-time minutes")
                     .defineInRange("upkeepPeriodMinutes", 60, 1, 10080);
+
+            forceLoadUpkeepMode = builder
+                    .comment(
+                            "When force-load upkeep is actually charged for a period:",
+                            "ALWAYS = charged every period regardless of who is online.",
+                            "DEFAULT = charged only when at least one of the team's own members is online."
+                    )
+                    .defineEnum("forceLoadUpkeepMode", ForceLoadUpkeepMode.DEFAULT);
+
+            protectionUpkeepMode = builder
+                    .comment(
+                            "When protection upkeep is actually charged (and can therefore be dismantled for non-payment) for a period:",
+                            "HEAVY = charged even when nobody is online at all (not recommended).",
+                            "DEFAULT = charged when at least one player is online anywhere on the server.",
+                            "LIGHT = charged only when at least one of the team's own members is online."
+                    )
+                    .defineEnum("protectionUpkeepMode", ProtectionUpkeepMode.DEFAULT);
 
             builder.pop();
             builder.comment("Per-protection base prices added to upkeep calculation (b in c = b * n)").push("protectionPrices");
@@ -107,23 +176,12 @@ public final class LCFtbHookConfig {
                     .defineInRange("warCostMultiplier", 1.2D, 1.0D, 100.0D);
 
             builder.pop();
-            builder.comment("Order in which protections are disabled when upkeep cannot be paid (first = dropped first). Use FTB property id paths without namespace.").push("protectionDismantle");
+            builder.comment("Order in which a region's protections are disabled when upkeep cannot be paid (first = dropped first); applied per-region in region-list order (top of the list dismantled first). Use the protection property ids without namespace.").push("protectionDismantle");
 
-            protectionDismantleOrderLand = builder
-                    .comment("Land-chunk protections dismantled first when upkeep fails")
+            protectionDismantleOrder = builder
+                    .comment("Per-region protection dismantle order")
                     .defineList(
-                            "protectionDismantleOrderLand",
-                            List.of(
-                                    "land_block_edit_mode",
-                                    "land_block_interact_mode"
-                            ),
-                            obj -> obj instanceof String
-                    );
-
-            protectionDismantleOrderBuild = builder
-                    .comment("Build-chunk protections dismantled after all land protections are off")
-                    .defineList(
-                            "protectionDismantleOrderBuild",
+                            "protectionDismantleOrder",
                             List.of(
                                     "entity_interact_mode",
                                     "block_edit_mode",

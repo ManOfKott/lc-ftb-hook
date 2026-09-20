@@ -96,11 +96,17 @@ public class TeamLifecycleHandler {
             ServerPlayer player = event.getPlayer();
             ClaimPriceSync.syncToPlayer(player);
             PendingStateSync.syncToPlayer(player);
-            dev.malik.lcftbhook.service.LandChunkService.syncToPlayer(player);
+            dev.malik.lcftbhook.service.RegionService.syncRegionsToPlayer(player);
+            dev.malik.lcftbhook.service.RegionService.syncMembershipToPlayer(player);
+            dev.malik.lcftbhook.service.RegionService.syncPublicRegionsToPlayer(player);
             WarStateSync.syncToPlayer(player);
             // Defer once: login sync can race the client's play handler registration
             // after a full server restart + reconnect.
-            server.execute(() -> dev.malik.lcftbhook.service.LandChunkService.syncToPlayer(player));
+            server.execute(() -> {
+                dev.malik.lcftbhook.service.RegionService.syncRegionsToPlayer(player);
+                dev.malik.lcftbhook.service.RegionService.syncMembershipToPlayer(player);
+                dev.malik.lcftbhook.service.RegionService.syncPublicRegionsToPlayer(player);
+            });
         }
     }
 

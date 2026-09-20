@@ -142,7 +142,7 @@ public final class LcTeamSyncService {
 
     @Nullable
     private static io.github.lightman314.lightmanscurrency.common.teams.Team createLcTeam(MinecraftServer server, Team ftbTeam) {
-        String name = truncateName(ftbTeam.getShortName());
+        String name = truncateName(displayName(ftbTeam));
         PlayerReference ownerRef = playerRef(server, ftbTeam.getOwner());
         return LcTeamAccess.registerTeam(ownerRef, name);
     }
@@ -158,7 +158,7 @@ public final class LcTeamSyncService {
             return;
         }
 
-        String expectedName = truncateName(ftbTeam.getShortName());
+        String expectedName = truncateName(displayName(ftbTeam));
         UUID ownerId = ftbTeam.getOwner();
         Set<Long> linkedIds = data.getLinkedLcTeamIds();
 
@@ -196,7 +196,7 @@ public final class LcTeamSyncService {
             LcTeamAccess.setOwner(lcTeam, ownerRef);
         }
 
-        String name = truncateName(ftbTeam.getShortName());
+        String name = truncateName(displayName(ftbTeam));
         if (!name.equals(lcTeam.getName())) {
             LcTeamAccess.setName(lcTeam, name);
         }
@@ -362,6 +362,17 @@ public final class LcTeamSyncService {
                     .orElse(playerId.toString());
         }
         return playerId.toString();
+    }
+
+    /**
+     * {@code Team.getShortName()} appends {@code "#" + first-8-hex-of-id} for
+     * disambiguation in logs/commands (e.g. "Utopia#4d8e9982") — fine for logging,
+     * but leaking that into the LC team name shows up as a garbled bank account
+     * label. {@code getName()} carries the same plain display text without the
+     * disambiguator or any chat styling.
+     */
+    private static String displayName(Team ftbTeam) {
+        return ftbTeam.getName().getString();
     }
 
     private static String truncateName(String name) {

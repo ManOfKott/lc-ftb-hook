@@ -5,6 +5,7 @@ import io.github.lightman314.lightmanscurrency.common.bank.BankAccount;
 import net.minecraft.core.HolderLookup;
 import net.minecraft.nbt.CompoundTag;
 import net.minecraft.nbt.ListTag;
+import net.minecraft.nbt.NbtUtils;
 import net.minecraft.nbt.StringTag;
 import net.minecraft.nbt.Tag;
 import net.minecraft.server.MinecraftServer;
@@ -13,14 +14,19 @@ import net.minecraft.world.level.saveddata.SavedData;
 import net.minecraft.world.level.storage.DimensionDataStorage;
 
 import javax.annotation.Nullable;
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 
 public class FtbHookSavedData extends SavedData {
     private static final String DATA_NAME = LCFtbHook.MOD_ID + "_team_accounts";
+    /** Name given to the region auto-created from a pre-Regions world's "land chunks" on first load after upgrade. */
+    private static final String MIGRATED_LAND_REGION_NAME = "Land";
 
     private final Map<UUID, TeamLinkEntry> teamLinks = new HashMap<>();
 
@@ -43,23 +49,167 @@ public class FtbHookSavedData extends SavedData {
             }
             boolean locked = entryTag.getBoolean("ProtectionLocked");
             TeamPendingState pending = loadPendingState(entryTag);
-            Set<String> landChunks = new HashSet<>();
-            if (entryTag.contains("LandChunks", Tag.TAG_LIST)) {
-                ListTag landList = entryTag.getList("LandChunks", Tag.TAG_STRING);
-                for (int j = 0; j < landList.size(); j++) {
-                    landChunks.add(landList.getString(j));
+
+            Map<String, ChunkOwnership> chunkOwnership = loadChunkOwnership(entryTag);
+
+            List<UUID> regionOrder;
+            Map<UUID, Region> regions;
+            Map<String, UUID> chunkRegions;
+            if (entryTag.contains("Regions", Tag.TAG_LIST)) {
+                regionOrder = new ArrayList<>();
+                regions = new LinkedHashMap<>();
+                loadRegions(entryTag, regionOrder, regions);
+                chunkRegions = loadChunkRegions(entryTag);
+            } else {
+                // Pre-Regions save: migrate the old flat land-chunk set into a
+                // dedicated "Land" region so the existing split isn't lost,
+                // alongside the usual auto-created Default for everything else.
+                regionOrder = new ArrayList<>();
+                regions = new LinkedHashMap<>();
+                chunkRegions = new HashMap<>();
+                Region defaultRegion = Region.createDefault();
+                regionOrder.add(defaultRegion.id());
+                regions.put(defaultRegion.id(), defaultRegion);
+
+                Set<String> legacyLandChunks = loadLegacyLandChunks(entryTag);
+                if (!legacyLandChunks.isEmpty()) {
+                    Region landRegion = Region.create(MIGRATED_LAND_REGION_NAME);
+                    regionOrder.add(0, landRegion.id());
+                    regions.put(landRegion.id(), landRegion);
+                    for (String chunkKey : legacyLandChunks) {
+                        chunkRegions.put(chunkKey, landRegion.id());
+                    }
                 }
+                data.setDirty();
             }
+
             Set<UUID> warTargets = new HashSet<>();
             if (entryTag.contains("WarTargets", Tag.TAG_LIST)) {
                 ListTag warList = entryTag.getList("WarTargets", Tag.TAG_INT_ARRAY);
                 for (int j = 0; j < warList.size(); j++) {
-                    warTargets.add(net.minecraft.nbt.NbtUtils.loadUUID(warList.get(j)));
+                    warTargets.add(NbtUtils.loadUUID(warList.get(j)));
                 }
             }
-            data.teamLinks.put(teamId, new TeamLinkEntry(teamId, lcTeamId, legacyAccount, locked, pending, landChunks, warTargets));
+            Set<String> unsettledChunks = new HashSet<>();
+            if (entryTag.contains("UnsettledChunks", Tag.TAG_LIST)) {
+                ListTag unsettledList = entryTag.getList("UnsettledChunks", Tag.TAG_STRING);
+                for (int j = 0; j < unsettledList.size(); j++) {
+                    unsettledChunks.add(unsettledList.getString(j));
+                }
+            }
+            Set<String> freshlyClaimedChunks = new HashSet<>();
+            if (entryTag.contains("FreshlyClaimedChunks", Tag.TAG_LIST)) {
+                ListTag freshlyClaimedList = entryTag.getList("FreshlyClaimedChunks", Tag.TAG_STRING);
+                for (int j = 0; j < freshlyClaimedList.size(); j++) {
+                    freshlyClaimedChunks.add(freshlyClaimedList.getString(j));
+                }
+            }
+            data.teamLinks.put(teamId, new TeamLinkEntry(
+                    teamId, lcTeamId, legacyAccount, locked, pending, regionOrder, regions, chunkRegions,
+                    chunkOwnership, warTargets, unsettledChunks, freshlyClaimedChunks
+            ));
         }
         return data;
+    }
+
+    private static Set<String> loadLegacyLandChunks(CompoundTag entryTag) {
+        Set<String> landChunks = new HashSet<>();
+        if (entryTag.contains("LandChunks", Tag.TAG_LIST)) {
+            ListTag landList = entryTag.getList("LandChunks", Tag.TAG_STRING);
+            for (int j = 0; j < landList.size(); j++) {
+                landChunks.add(landList.getString(j));
+            }
+        }
+        return landChunks;
+    }
+
+    private static void loadRegions(CompoundTag entryTag, List<UUID> regionOrder, Map<UUID, Region> regions) {
+        ListTag regionsTag = entryTag.getList("Regions", Tag.TAG_COMPOUND);
+        for (int i = 0; i < regionsTag.size(); i++) {
+            CompoundTag regionTag = regionsTag.getCompound(i);
+            UUID id = regionTag.getUUID("Id");
+            String name = regionTag.getString("Name");
+            boolean isDefault = regionTag.getBoolean("IsDefault");
+            Map<String, String> properties = new HashMap<>();
+            if (regionTag.contains("Properties", Tag.TAG_COMPOUND)) {
+                CompoundTag propertiesTag = regionTag.getCompound("Properties");
+                for (String key : propertiesTag.getAllKeys()) {
+                    properties.put(key, propertiesTag.getString(key));
+                }
+            }
+            // Absent (pre-existing saves from before this setting existed) defaults to true.
+            boolean allowPrivateSelling = !regionTag.contains("AllowPrivateSelling") || regionTag.getBoolean("AllowPrivateSelling");
+            // Absent (pre-existing saves) defaults to ALL, matching the old team-wide property's own default.
+            String buyerAccess = regionTag.contains("BuyerAccess")
+                    ? regionTag.getString("BuyerAccess")
+                    : dev.malik.lcftbhook.teams.MarketplaceTeamProperties.ACCESS_ALL;
+            regions.put(id, new Region(id, name, isDefault, properties, allowPrivateSelling, buyerAccess));
+        }
+        if (entryTag.contains("RegionOrder", Tag.TAG_LIST)) {
+            ListTag orderTag = entryTag.getList("RegionOrder", Tag.TAG_INT_ARRAY);
+            for (int i = 0; i < orderTag.size(); i++) {
+                UUID id = NbtUtils.loadUUID(orderTag.get(i));
+                if (regions.containsKey(id)) {
+                    regionOrder.add(id);
+                }
+            }
+        }
+        // Safety net: any region present in the map but missing from the
+        // (possibly hand-edited or corrupted) order list is appended so it
+        // isn't silently orphaned from dismantle-order/UI purposes.
+        for (UUID id : regions.keySet()) {
+            if (!regionOrder.contains(id)) {
+                regionOrder.add(id);
+            }
+        }
+    }
+
+    private static Map<String, ChunkOwnership> loadChunkOwnership(CompoundTag entryTag) {
+        Map<String, ChunkOwnership> ownership = new HashMap<>();
+        if (!entryTag.contains("ChunkOwnership", Tag.TAG_COMPOUND)) {
+            return ownership;
+        }
+        CompoundTag ownershipTag = entryTag.getCompound("ChunkOwnership");
+        for (String chunkKey : ownershipTag.getAllKeys()) {
+            CompoundTag entry = ownershipTag.getCompound(chunkKey);
+            UUID privateOwner = entry.contains("Owner", Tag.TAG_INT_ARRAY) ? entry.getUUID("Owner") : null;
+            Long price = entry.contains("Price", Tag.TAG_LONG) ? entry.getLong("Price") : null;
+            Map<String, String> overrides = new HashMap<>();
+            if (entry.contains("Overrides", Tag.TAG_COMPOUND)) {
+                CompoundTag overridesTag = entry.getCompound("Overrides");
+                for (String key : overridesTag.getAllKeys()) {
+                    overrides.put(key, overridesTag.getString(key));
+                }
+            }
+            Map<String, dev.malik.lcftbhook.data.PlayerAccessList> accessLists = new HashMap<>();
+            if (entry.contains("AccessLists", Tag.TAG_COMPOUND)) {
+                CompoundTag accessListsTag = entry.getCompound("AccessLists");
+                for (String propertyId : accessListsTag.getAllKeys()) {
+                    CompoundTag listTag = accessListsTag.getCompound(propertyId);
+                    boolean whitelist = !listTag.contains("Whitelist") || listTag.getBoolean("Whitelist");
+                    Set<UUID> players = new HashSet<>();
+                    ListTag playersTag = listTag.getList("Players", Tag.TAG_INT_ARRAY);
+                    for (int i = 0; i < playersTag.size(); i++) {
+                        players.add(NbtUtils.loadUUID(playersTag.get(i)));
+                    }
+                    accessLists.put(propertyId, new dev.malik.lcftbhook.data.PlayerAccessList(whitelist, players));
+                }
+            }
+            String label = entry.contains("Label", Tag.TAG_STRING) ? entry.getString("Label") : null;
+            ownership.put(chunkKey, new ChunkOwnership(privateOwner, price, overrides, accessLists, label));
+        }
+        return ownership;
+    }
+
+    private static Map<String, UUID> loadChunkRegions(CompoundTag entryTag) {
+        Map<String, UUID> chunkRegions = new HashMap<>();
+        if (entryTag.contains("ChunkRegions", Tag.TAG_COMPOUND)) {
+            CompoundTag chunkRegionsTag = entryTag.getCompound("ChunkRegions");
+            for (String chunkKey : chunkRegionsTag.getAllKeys()) {
+                chunkRegions.put(chunkKey, NbtUtils.loadUUID(chunkRegionsTag.get(chunkKey)));
+            }
+        }
+        return chunkRegions;
     }
 
     private static TeamPendingState loadPendingState(CompoundTag entryTag) {
@@ -91,7 +241,7 @@ public class FtbHookSavedData extends SavedData {
         if (entryTag.contains("PendingWarDeclares", Tag.TAG_LIST)) {
             ListTag declares = entryTag.getList("PendingWarDeclares", Tag.TAG_INT_ARRAY);
             for (int i = 0; i < declares.size(); i++) {
-                pendingWarDeclares.add(net.minecraft.nbt.NbtUtils.loadUUID(declares.get(i)));
+                pendingWarDeclares.add(NbtUtils.loadUUID(declares.get(i)));
             }
         }
 
@@ -99,30 +249,22 @@ public class FtbHookSavedData extends SavedData {
         if (entryTag.contains("PendingWarEnds", Tag.TAG_LIST)) {
             ListTag ends = entryTag.getList("PendingWarEnds", Tag.TAG_INT_ARRAY);
             for (int i = 0; i < ends.size(); i++) {
-                pendingWarEnds.add(net.minecraft.nbt.NbtUtils.loadUUID(ends.get(i)));
+                pendingWarEnds.add(NbtUtils.loadUUID(ends.get(i)));
             }
         }
 
-        Set<String> pendingLandChunks = new HashSet<>();
-        if (entryTag.contains("PendingLandChunks", Tag.TAG_LIST)) {
-            ListTag landPending = entryTag.getList("PendingLandChunks", Tag.TAG_STRING);
-            for (int i = 0; i < landPending.size(); i++) {
-                pendingLandChunks.add(landPending.getString(i));
-            }
-        }
-
-        Set<String> pendingBuildChunks = new HashSet<>();
-        if (entryTag.contains("PendingBuildChunks", Tag.TAG_LIST)) {
-            ListTag buildPending = entryTag.getList("PendingBuildChunks", Tag.TAG_STRING);
-            for (int i = 0; i < buildPending.size(); i++) {
-                pendingBuildChunks.add(buildPending.getString(i));
+        Map<String, UUID> pendingRegionAssignments = new HashMap<>();
+        if (entryTag.contains("PendingRegionAssignments", Tag.TAG_COMPOUND)) {
+            CompoundTag assignmentsTag = entryTag.getCompound("PendingRegionAssignments");
+            for (String chunkKey : assignmentsTag.getAllKeys()) {
+                pendingRegionAssignments.put(chunkKey, NbtUtils.loadUUID(assignmentsTag.get(chunkKey)));
             }
         }
 
         if (entryTag.contains("AutoSuspendedWars", Tag.TAG_LIST)) {
             ListTag suspendedWars = entryTag.getList("AutoSuspendedWars", Tag.TAG_INT_ARRAY);
             for (int i = 0; i < suspendedWars.size(); i++) {
-                pendingWarDeclares.add(net.minecraft.nbt.NbtUtils.loadUUID(suspendedWars.get(i)));
+                pendingWarDeclares.add(NbtUtils.loadUUID(suspendedWars.get(i)));
             }
         }
 
@@ -130,8 +272,7 @@ public class FtbHookSavedData extends SavedData {
                 pendingProperties,
                 pendingLoads,
                 pendingUnloads,
-                pendingLandChunks,
-                pendingBuildChunks,
+                pendingRegionAssignments,
                 pendingWarDeclares,
                 pendingWarEnds
         );
@@ -151,15 +292,83 @@ public class FtbHookSavedData extends SavedData {
             }
             entryTag.putBoolean("ProtectionLocked", entry.protectionLocked());
             savePendingState(entryTag, entry.pendingState());
-            if (!entry.landChunks().isEmpty()) {
-                ListTag landList = new ListTag();
-                entry.landChunks().forEach(key -> landList.add(StringTag.valueOf(key)));
-                entryTag.put("LandChunks", landList);
+
+            ListTag regionsTag = new ListTag();
+            for (Region region : entry.regions().values()) {
+                CompoundTag regionTag = new CompoundTag();
+                regionTag.putUUID("Id", region.id());
+                regionTag.putString("Name", region.name());
+                regionTag.putBoolean("IsDefault", region.isDefault());
+                regionTag.putBoolean("AllowPrivateSelling", region.allowPrivateSelling());
+                regionTag.putString("BuyerAccess", region.buyerAccess());
+                if (!region.properties().isEmpty()) {
+                    CompoundTag propertiesTag = new CompoundTag();
+                    region.properties().forEach(propertiesTag::putString);
+                    regionTag.put("Properties", propertiesTag);
+                }
+                regionsTag.add(regionTag);
             }
+            entryTag.put("Regions", regionsTag);
+
+            ListTag regionOrderTag = new ListTag();
+            entry.regionOrder().forEach(id -> regionOrderTag.add(NbtUtils.createUUID(id)));
+            entryTag.put("RegionOrder", regionOrderTag);
+
+            if (!entry.chunkRegions().isEmpty()) {
+                CompoundTag chunkRegionsTag = new CompoundTag();
+                entry.chunkRegions().forEach((chunkKey, regionId) -> chunkRegionsTag.put(chunkKey, NbtUtils.createUUID(regionId)));
+                entryTag.put("ChunkRegions", chunkRegionsTag);
+            }
+
+            if (!entry.chunkOwnership().isEmpty()) {
+                CompoundTag ownershipTag = new CompoundTag();
+                entry.chunkOwnership().forEach((chunkKey, ownership) -> {
+                    CompoundTag ownershipEntryTag = new CompoundTag();
+                    if (ownership.privateOwner() != null) {
+                        ownershipEntryTag.putUUID("Owner", ownership.privateOwner());
+                    }
+                    if (ownership.listingPricePerChunk() != null) {
+                        ownershipEntryTag.putLong("Price", ownership.listingPricePerChunk());
+                    }
+                    if (!ownership.protectionOverride().isEmpty()) {
+                        CompoundTag overridesTag = new CompoundTag();
+                        ownership.protectionOverride().forEach(overridesTag::putString);
+                        ownershipEntryTag.put("Overrides", overridesTag);
+                    }
+                    if (!ownership.accessLists().isEmpty()) {
+                        CompoundTag accessListsTag = new CompoundTag();
+                        ownership.accessLists().forEach((propertyId, accessList) -> {
+                            CompoundTag listTag = new CompoundTag();
+                            listTag.putBoolean("Whitelist", accessList.whitelist());
+                            ListTag playersTag = new ListTag();
+                            accessList.players().forEach(playerId -> playersTag.add(NbtUtils.createUUID(playerId)));
+                            listTag.put("Players", playersTag);
+                            accessListsTag.put(propertyId, listTag);
+                        });
+                        ownershipEntryTag.put("AccessLists", accessListsTag);
+                    }
+                    if (ownership.label() != null && !ownership.label().isEmpty()) {
+                        ownershipEntryTag.putString("Label", ownership.label());
+                    }
+                    ownershipTag.put(chunkKey, ownershipEntryTag);
+                });
+                entryTag.put("ChunkOwnership", ownershipTag);
+            }
+
             if (!entry.warTargets().isEmpty()) {
                 ListTag warList = new ListTag();
-                entry.warTargets().forEach(id -> warList.add(net.minecraft.nbt.NbtUtils.createUUID(id)));
+                entry.warTargets().forEach(id -> warList.add(NbtUtils.createUUID(id)));
                 entryTag.put("WarTargets", warList);
+            }
+            if (!entry.unsettledChunks().isEmpty()) {
+                ListTag unsettledList = new ListTag();
+                entry.unsettledChunks().forEach(key -> unsettledList.add(StringTag.valueOf(key)));
+                entryTag.put("UnsettledChunks", unsettledList);
+            }
+            if (!entry.freshlyClaimedChunks().isEmpty()) {
+                ListTag freshlyClaimedList = new ListTag();
+                entry.freshlyClaimedChunks().forEach(key -> freshlyClaimedList.add(StringTag.valueOf(key)));
+                entryTag.put("FreshlyClaimedChunks", freshlyClaimedList);
             }
             list.add(entryTag);
         }
@@ -183,24 +392,19 @@ public class FtbHookSavedData extends SavedData {
             pendingState.pendingForceUnloads().forEach(key -> unloads.add(StringTag.valueOf(key)));
             entryTag.put("PendingForceUnloads", unloads);
         }
-        if (!pendingState.pendingLandChunks().isEmpty()) {
-            ListTag landPending = new ListTag();
-            pendingState.pendingLandChunks().forEach(key -> landPending.add(StringTag.valueOf(key)));
-            entryTag.put("PendingLandChunks", landPending);
-        }
-        if (!pendingState.pendingBuildChunks().isEmpty()) {
-            ListTag buildPending = new ListTag();
-            pendingState.pendingBuildChunks().forEach(key -> buildPending.add(StringTag.valueOf(key)));
-            entryTag.put("PendingBuildChunks", buildPending);
+        if (!pendingState.pendingRegionAssignments().isEmpty()) {
+            CompoundTag assignmentsTag = new CompoundTag();
+            pendingState.pendingRegionAssignments().forEach((chunkKey, regionId) -> assignmentsTag.put(chunkKey, NbtUtils.createUUID(regionId)));
+            entryTag.put("PendingRegionAssignments", assignmentsTag);
         }
         if (!pendingState.pendingWarDeclares().isEmpty()) {
             ListTag declares = new ListTag();
-            pendingState.pendingWarDeclares().forEach(id -> declares.add(net.minecraft.nbt.NbtUtils.createUUID(id)));
+            pendingState.pendingWarDeclares().forEach(id -> declares.add(NbtUtils.createUUID(id)));
             entryTag.put("PendingWarDeclares", declares);
         }
         if (!pendingState.pendingWarEnds().isEmpty()) {
             ListTag ends = new ListTag();
-            pendingState.pendingWarEnds().forEach(id -> ends.add(net.minecraft.nbt.NbtUtils.createUUID(id)));
+            pendingState.pendingWarEnds().forEach(id -> ends.add(NbtUtils.createUUID(id)));
             entryTag.put("PendingWarEnds", ends);
         }
     }
@@ -208,8 +412,22 @@ public class FtbHookSavedData extends SavedData {
     public TeamLinkEntry getOrCreateLink(UUID ftbTeamId) {
         return teamLinks.computeIfAbsent(ftbTeamId, id -> {
             setDirty();
-            return new TeamLinkEntry(id, -1L, null, false, new TeamPendingState(), Set.of(), Set.of());
+            return freshEntry(id);
         });
+    }
+
+    private static TeamLinkEntry freshEntry(UUID ftbTeamId) {
+        Region defaultRegion = Region.createDefault();
+        return new TeamLinkEntry(
+                ftbTeamId, -1L, null, false, new TeamPendingState(),
+                new ArrayList<>(List.of(defaultRegion.id())),
+                new LinkedHashMap<>(Map.of(defaultRegion.id(), defaultRegion)),
+                new HashMap<>(),
+                new HashMap<>(),
+                Set.of(),
+                new HashSet<>(),
+                new HashSet<>()
+        );
     }
 
     @Nullable
@@ -231,7 +449,7 @@ public class FtbHookSavedData extends SavedData {
     }
 
     public java.util.Collection<TeamLinkEntry> getAllLinks() {
-        return java.util.List.copyOf(teamLinks.values());
+        return List.copyOf(teamLinks.values());
     }
 
     @Nullable
@@ -243,7 +461,7 @@ public class FtbHookSavedData extends SavedData {
         return removed;
     }
 
-    /** Clears the LC bank link only; keeps land chunks, pending state, and protection lock. */
+    /** Clears the LC bank link only; keeps regions, pending state, and protection lock. */
     public boolean clearLcTeamLink(UUID ftbTeamId) {
         TeamLinkEntry entry = teamLinks.get(ftbTeamId);
         if (entry == null || (entry.lcTeamId() <= 0 && entry.legacyAccount() == null)) {
@@ -252,13 +470,6 @@ public class FtbHookSavedData extends SavedData {
         teamLinks.put(ftbTeamId, entry.withLcTeamId(-1L).withLegacyAccount(null));
         setDirty();
         return true;
-    }
-
-    public void removeLinkByLcTeamId(long lcTeamId) {
-        TeamLinkEntry entry = findByLcTeamId(lcTeamId);
-        if (entry != null) {
-            removeLink(entry.ftbTeamId());
-        }
     }
 
     public TeamPendingState getPendingState(UUID ftbTeamId) {
@@ -294,48 +505,145 @@ public class FtbHookSavedData extends SavedData {
             teamLinks.put(teamId, entry.withProtectionLocked(locked));
             setDirty();
         } else if (entry == null && locked) {
-            teamLinks.put(teamId, new TeamLinkEntry(teamId, -1L, null, true, new TeamPendingState(), Set.of(), Set.of()));
+            teamLinks.put(teamId, freshEntry(teamId).withProtectionLocked(true));
             setDirty();
         }
     }
 
-    public Set<String> getLandChunks(UUID teamId) {
+    // ---- Regions ----
+
+    public Map<UUID, Region> getRegions(UUID teamId) {
         TeamLinkEntry entry = teamLinks.get(teamId);
-        return entry == null ? Set.of() : entry.landChunks();
+        return entry == null ? Map.of() : entry.regions();
     }
 
-    public boolean isLandChunk(UUID teamId, String chunkKey) {
-        return getLandChunks(teamId).contains(chunkKey);
+    @Nullable
+    public Region getRegion(UUID teamId, UUID regionId) {
+        return getRegions(teamId).get(regionId);
     }
 
-    /**
-     * Marks or unmarks a chunk as land chunk. Returns true if the stored
-     * state actually changed.
-     */
-    public boolean setLandChunk(UUID teamId, String chunkKey, boolean land) {
+    public List<UUID> getRegionOrder(UUID teamId) {
+        TeamLinkEntry entry = teamLinks.get(teamId);
+        return entry == null ? List.of() : entry.regionOrder();
+    }
+
+    public UUID getDefaultRegionId(UUID teamId) {
         TeamLinkEntry entry = getOrCreateLink(teamId);
-        if (entry.landChunks().contains(chunkKey) == land) {
+        for (Region region : entry.regions().values()) {
+            if (region.isDefault()) {
+                return region.id();
+            }
+        }
+        // Should be unreachable (freshEntry always seeds one), but stay defensive.
+        Region defaultRegion = Region.createDefault();
+        addRegion(teamId, defaultRegion, true);
+        return defaultRegion.id();
+    }
+
+    public void updateRegion(UUID teamId, Region region) {
+        TeamLinkEntry entry = getOrCreateLink(teamId);
+        Map<UUID, Region> updated = new LinkedHashMap<>(entry.regions());
+        updated.put(region.id(), region);
+        teamLinks.put(teamId, entry.withRegions(Map.copyOf(updated)));
+        setDirty();
+    }
+
+    /** @param atTop true = insert at index 0 (dismantled first); false = append at the end. */
+    public void addRegion(UUID teamId, Region region, boolean atTop) {
+        TeamLinkEntry entry = getOrCreateLink(teamId);
+        Map<UUID, Region> updatedRegions = new LinkedHashMap<>(entry.regions());
+        updatedRegions.put(region.id(), region);
+        List<UUID> updatedOrder = new ArrayList<>(entry.regionOrder());
+        if (atTop) {
+            updatedOrder.add(0, region.id());
+        } else {
+            updatedOrder.add(region.id());
+        }
+        teamLinks.put(teamId, entry.withRegions(Map.copyOf(updatedRegions)).withRegionOrder(List.copyOf(updatedOrder)));
+        setDirty();
+    }
+
+    /** Removes a region, reassigning every chunk currently in it to the team's Default region. Refuses (no-op) on the Default region itself. */
+    public boolean removeRegion(UUID teamId, UUID regionId) {
+        TeamLinkEntry entry = teamLinks.get(teamId);
+        if (entry == null) {
             return false;
         }
-        Set<String> updated = new HashSet<>(entry.landChunks());
-        if (land) {
-            updated.add(chunkKey);
-        } else {
-            updated.remove(chunkKey);
+        Region region = entry.regions().get(regionId);
+        if (region == null || region.isDefault()) {
+            return false;
         }
-        teamLinks.put(teamId, entry.withLandChunks(updated));
+        UUID defaultId = getDefaultRegionId(teamId);
+        entry = teamLinks.get(teamId); // may have changed if getDefaultRegionId had to seed one
+
+        Map<UUID, Region> updatedRegions = new LinkedHashMap<>(entry.regions());
+        updatedRegions.remove(regionId);
+        List<UUID> updatedOrder = new ArrayList<>(entry.regionOrder());
+        updatedOrder.remove(regionId);
+
+        Map<String, UUID> updatedChunkRegions = new HashMap<>(entry.chunkRegions());
+        for (Map.Entry<String, UUID> chunkEntry : entry.chunkRegions().entrySet()) {
+            if (chunkEntry.getValue().equals(regionId)) {
+                updatedChunkRegions.put(chunkEntry.getKey(), defaultId);
+            }
+        }
+        // Chunks with no explicit entry (already implicitly Default) don't need touching.
+
+        TeamPendingState cleanedPending = entry.pendingState().withoutRegionReferences(regionId);
+
+        teamLinks.put(teamId, entry
+                .withRegions(Map.copyOf(updatedRegions))
+                .withRegionOrder(List.copyOf(updatedOrder))
+                .withChunkRegions(Map.copyOf(updatedChunkRegions))
+                .withPendingState(cleanedPending));
         setDirty();
         return true;
     }
 
-    /** Removes a chunk from every team's land set (e.g. after unclaiming). */
-    public boolean clearLandChunk(String chunkKey) {
+    public boolean setRegionOrder(UUID teamId, List<UUID> newOrder) {
+        TeamLinkEntry entry = teamLinks.get(teamId);
+        if (entry == null) {
+            return false;
+        }
+        if (!Set.copyOf(newOrder).equals(entry.regions().keySet()) || newOrder.size() != entry.regionOrder().size()) {
+            return false; // not a permutation of the existing regions
+        }
+        teamLinks.put(teamId, entry.withRegionOrder(List.copyOf(newOrder)));
+        setDirty();
+        return true;
+    }
+
+    public UUID getChunkRegion(UUID teamId, String chunkKey) {
+        TeamLinkEntry entry = teamLinks.get(teamId);
+        if (entry == null) {
+            return getDefaultRegionId(teamId);
+        }
+        return entry.chunkRegions().getOrDefault(chunkKey, getDefaultRegionId(teamId));
+    }
+
+    public void setChunkRegion(UUID teamId, String chunkKey, UUID regionId) {
+        TeamLinkEntry entry = getOrCreateLink(teamId);
+        UUID defaultId = getDefaultRegionId(teamId);
+        entry = teamLinks.get(teamId);
+        Map<String, UUID> updated = new HashMap<>(entry.chunkRegions());
+        if (regionId.equals(defaultId)) {
+            // Default is the implicit absence-of-entry state; keep the map sparse.
+            updated.remove(chunkKey);
+        } else {
+            updated.put(chunkKey, regionId);
+        }
+        teamLinks.put(teamId, entry.withChunkRegions(Map.copyOf(updated)));
+        setDirty();
+    }
+
+    /** Removes a chunk's region assignment from every team (e.g. after unclaiming). */
+    public boolean clearChunkRegion(String chunkKey) {
         boolean changed = false;
-        for (TeamLinkEntry entry : java.util.List.copyOf(teamLinks.values())) {
-            if (entry.landChunks().contains(chunkKey)) {
-                Set<String> updated = new HashSet<>(entry.landChunks());
+        for (TeamLinkEntry entry : List.copyOf(teamLinks.values())) {
+            if (entry.chunkRegions().containsKey(chunkKey)) {
+                Map<String, UUID> updated = new HashMap<>(entry.chunkRegions());
                 updated.remove(chunkKey);
-                teamLinks.put(entry.ftbTeamId(), entry.withLandChunks(updated));
+                teamLinks.put(entry.ftbTeamId(), entry.withChunkRegions(Map.copyOf(updated)));
                 changed = true;
             }
         }
@@ -345,10 +653,133 @@ public class FtbHookSavedData extends SavedData {
         return changed;
     }
 
-    public Set<String> getAllLandChunks() {
+    public Map<String, UUID> getAllChunkRegions() {
+        Map<String, UUID> all = new HashMap<>();
+        for (TeamLinkEntry entry : teamLinks.values()) {
+            all.putAll(entry.chunkRegions());
+        }
+        return all;
+    }
+
+    // ---- Unsettled chunks (no protection until the next successful upkeep settlement) ----
+
+    public boolean isChunkUnsettled(UUID teamId, String chunkKey) {
+        TeamLinkEntry entry = teamLinks.get(teamId);
+        return entry != null && entry.unsettledChunks().contains(chunkKey);
+    }
+
+    public void markChunkUnsettled(UUID teamId, String chunkKey) {
+        TeamLinkEntry entry = getOrCreateLink(teamId);
+        entry = teamLinks.get(teamId);
+        if (entry.unsettledChunks().contains(chunkKey)) {
+            return;
+        }
+        Set<String> updated = new HashSet<>(entry.unsettledChunks());
+        updated.add(chunkKey);
+        teamLinks.put(teamId, entry.withUnsettledChunks(Set.copyOf(updated)));
+        setDirty();
+    }
+
+    /** Called once a team's upkeep successfully settles - from then on every currently-claimed chunk uses its Region's real protection. */
+    public void clearUnsettledChunks(UUID teamId) {
+        TeamLinkEntry entry = teamLinks.get(teamId);
+        if (entry == null || entry.unsettledChunks().isEmpty()) {
+            return;
+        }
+        teamLinks.put(teamId, entry.withUnsettledChunks(Set.of()));
+        setDirty();
+    }
+
+    /** Bare chunk keys across every team - broadcast globally so any viewer's hover panel can show "not sellable yet", same as chunk ownership. */
+    public Set<String> getAllUnsettledChunks() {
         Set<String> all = new HashSet<>();
         for (TeamLinkEntry entry : teamLinks.values()) {
-            all.addAll(entry.landChunks());
+            all.addAll(entry.unsettledChunks());
+        }
+        return all;
+    }
+
+    // ---- Freshly claimed chunks (marketplace sell cooldown - claims only, never private buys) ----
+
+    public boolean isChunkFreshlyClaimed(UUID teamId, String chunkKey) {
+        TeamLinkEntry entry = teamLinks.get(teamId);
+        return entry != null && entry.freshlyClaimedChunks().contains(chunkKey);
+    }
+
+    public void markChunkFreshlyClaimed(UUID teamId, String chunkKey) {
+        TeamLinkEntry entry = getOrCreateLink(teamId);
+        entry = teamLinks.get(teamId);
+        if (entry.freshlyClaimedChunks().contains(chunkKey)) {
+            return;
+        }
+        Set<String> updated = new HashSet<>(entry.freshlyClaimedChunks());
+        updated.add(chunkKey);
+        teamLinks.put(teamId, entry.withFreshlyClaimedChunks(Set.copyOf(updated)));
+        setDirty();
+    }
+
+    /** Called once a team's upkeep successfully settles - from then on every currently-claimed chunk is sellable again. */
+    public void clearFreshlyClaimedChunks(UUID teamId) {
+        TeamLinkEntry entry = teamLinks.get(teamId);
+        if (entry == null || entry.freshlyClaimedChunks().isEmpty()) {
+            return;
+        }
+        teamLinks.put(teamId, entry.withFreshlyClaimedChunks(Set.of()));
+        setDirty();
+    }
+
+    /** Bare chunk keys across every team - broadcast globally so any viewer's hover panel can show "not sellable yet". */
+    public Set<String> getAllFreshlyClaimedChunks() {
+        Set<String> all = new HashSet<>();
+        for (TeamLinkEntry entry : teamLinks.values()) {
+            all.addAll(entry.freshlyClaimedChunks());
+        }
+        return all;
+    }
+
+    // ---- Marketplace ----
+
+    public ChunkOwnership getChunkOwnership(UUID teamId, String chunkKey) {
+        TeamLinkEntry entry = teamLinks.get(teamId);
+        if (entry == null) {
+            return ChunkOwnership.EMPTY;
+        }
+        return entry.chunkOwnership().getOrDefault(chunkKey, ChunkOwnership.EMPTY);
+    }
+
+    public void setChunkOwnership(UUID teamId, String chunkKey, ChunkOwnership ownership) {
+        TeamLinkEntry entry = getOrCreateLink(teamId);
+        Map<String, ChunkOwnership> updated = new HashMap<>(entry.chunkOwnership());
+        if (ownership.isEmpty()) {
+            updated.remove(chunkKey);
+        } else {
+            updated.put(chunkKey, ownership);
+        }
+        teamLinks.put(teamId, entry.withChunkOwnership(Map.copyOf(updated)));
+        setDirty();
+    }
+
+    /** Clears a chunk's ownership/listing/override from every team (e.g. after unclaiming). */
+    public boolean clearChunkOwnership(String chunkKey) {
+        boolean changed = false;
+        for (TeamLinkEntry entry : List.copyOf(teamLinks.values())) {
+            if (entry.chunkOwnership().containsKey(chunkKey)) {
+                Map<String, ChunkOwnership> updated = new HashMap<>(entry.chunkOwnership());
+                updated.remove(chunkKey);
+                teamLinks.put(entry.ftbTeamId(), entry.withChunkOwnership(Map.copyOf(updated)));
+                changed = true;
+            }
+        }
+        if (changed) {
+            setDirty();
+        }
+        return changed;
+    }
+
+    public Map<String, ChunkOwnership> getAllChunkOwnership() {
+        Map<String, ChunkOwnership> all = new HashMap<>();
+        for (TeamLinkEntry entry : teamLinks.values()) {
+            all.putAll(entry.chunkOwnership());
         }
         return all;
     }
@@ -356,18 +787,6 @@ public class FtbHookSavedData extends SavedData {
     public boolean isProtectionLocked(UUID teamId) {
         TeamLinkEntry entry = teamLinks.get(teamId);
         return entry != null && entry.protectionLocked();
-    }
-
-    public boolean isManagedLcTeam(long lcTeamId) {
-        if (lcTeamId <= 0) {
-            return false;
-        }
-        for (TeamLinkEntry entry : teamLinks.values()) {
-            if (entry.lcTeamId() == lcTeamId) {
-                return true;
-            }
-        }
-        return false;
     }
 
     public Set<Long> getLinkedLcTeamIds() {
@@ -423,7 +842,7 @@ public class FtbHookSavedData extends SavedData {
             teamLinks.put(teamId, ownEntry.withWarTargets(Set.of()));
             changed = true;
         }
-        for (TeamLinkEntry entry : java.util.List.copyOf(teamLinks.values())) {
+        for (TeamLinkEntry entry : List.copyOf(teamLinks.values())) {
             UUID entryTeamId = entry.ftbTeamId();
             TeamPendingState pending = entry.pendingState();
             TeamPendingState cleaned = pending.withoutWarReferences(teamId);
@@ -443,47 +862,72 @@ public class FtbHookSavedData extends SavedData {
         }
     }
 
-    public int countIncomingWars(UUID targetTeamId) {
-        int count = 0;
-        for (TeamLinkEntry entry : teamLinks.values()) {
-            if (entry.warTargets().contains(targetTeamId)) {
-                count++;
-            }
-        }
-        return count;
-    }
-
     public record TeamLinkEntry(
             UUID ftbTeamId,
             long lcTeamId,
             @Nullable BankAccount legacyAccount,
             boolean protectionLocked,
             TeamPendingState pendingState,
-            Set<String> landChunks,
-            Set<UUID> warTargets
+            List<UUID> regionOrder,
+            Map<UUID, Region> regions,
+            Map<String, UUID> chunkRegions,
+            Map<String, ChunkOwnership> chunkOwnership,
+            Set<UUID> warTargets,
+            /** Chunks claimed or newly privately-bought that haven't gone through an upkeep settlement yet - see {@link RegionService#resolveRegion}. */
+            Set<String> unsettledChunks,
+            /**
+             * Chunks freshly CLAIMED (not bought - see {@code ChunkClaimHandler#afterClaim})
+             * that haven't gone through an upkeep settlement yet, blocking them from
+             * being listed on the marketplace until then. Deliberately separate from
+             * {@link #unsettledChunks}, which ALSO covers freshly-bought chunks for an
+             * unrelated purpose (protection reset) - a private buyer must be able to
+             * resell a chunk they just bought immediately, so the marketplace
+             * "not sellable yet" restriction can't reuse that broader set.
+             */
+            Set<String> freshlyClaimedChunks
     ) {
         TeamLinkEntry withLcTeamId(long id) {
-            return new TeamLinkEntry(ftbTeamId, id, legacyAccount, protectionLocked, pendingState, landChunks, warTargets);
+            return new TeamLinkEntry(ftbTeamId, id, legacyAccount, protectionLocked, pendingState, regionOrder, regions, chunkRegions, chunkOwnership, warTargets, unsettledChunks, freshlyClaimedChunks);
         }
 
         TeamLinkEntry withLegacyAccount(@Nullable BankAccount account) {
-            return new TeamLinkEntry(ftbTeamId, lcTeamId, account, protectionLocked, pendingState, landChunks, warTargets);
+            return new TeamLinkEntry(ftbTeamId, lcTeamId, account, protectionLocked, pendingState, regionOrder, regions, chunkRegions, chunkOwnership, warTargets, unsettledChunks, freshlyClaimedChunks);
         }
 
         TeamLinkEntry withProtectionLocked(boolean locked) {
-            return new TeamLinkEntry(ftbTeamId, lcTeamId, legacyAccount, locked, pendingState, landChunks, warTargets);
+            return new TeamLinkEntry(ftbTeamId, lcTeamId, legacyAccount, locked, pendingState, regionOrder, regions, chunkRegions, chunkOwnership, warTargets, unsettledChunks, freshlyClaimedChunks);
         }
 
         TeamLinkEntry withPendingState(TeamPendingState pending) {
-            return new TeamLinkEntry(ftbTeamId, lcTeamId, legacyAccount, protectionLocked, pending, landChunks, warTargets);
+            return new TeamLinkEntry(ftbTeamId, lcTeamId, legacyAccount, protectionLocked, pending, regionOrder, regions, chunkRegions, chunkOwnership, warTargets, unsettledChunks, freshlyClaimedChunks);
         }
 
-        TeamLinkEntry withLandChunks(Set<String> chunks) {
-            return new TeamLinkEntry(ftbTeamId, lcTeamId, legacyAccount, protectionLocked, pendingState, chunks, warTargets);
+        TeamLinkEntry withRegionOrder(List<UUID> order) {
+            return new TeamLinkEntry(ftbTeamId, lcTeamId, legacyAccount, protectionLocked, pendingState, order, regions, chunkRegions, chunkOwnership, warTargets, unsettledChunks, freshlyClaimedChunks);
+        }
+
+        TeamLinkEntry withRegions(Map<UUID, Region> updatedRegions) {
+            return new TeamLinkEntry(ftbTeamId, lcTeamId, legacyAccount, protectionLocked, pendingState, regionOrder, updatedRegions, chunkRegions, chunkOwnership, warTargets, unsettledChunks, freshlyClaimedChunks);
+        }
+
+        TeamLinkEntry withChunkRegions(Map<String, UUID> updatedChunkRegions) {
+            return new TeamLinkEntry(ftbTeamId, lcTeamId, legacyAccount, protectionLocked, pendingState, regionOrder, regions, updatedChunkRegions, chunkOwnership, warTargets, unsettledChunks, freshlyClaimedChunks);
+        }
+
+        TeamLinkEntry withChunkOwnership(Map<String, ChunkOwnership> updatedOwnership) {
+            return new TeamLinkEntry(ftbTeamId, lcTeamId, legacyAccount, protectionLocked, pendingState, regionOrder, regions, chunkRegions, updatedOwnership, warTargets, unsettledChunks, freshlyClaimedChunks);
         }
 
         TeamLinkEntry withWarTargets(Set<UUID> targets) {
-            return new TeamLinkEntry(ftbTeamId, lcTeamId, legacyAccount, protectionLocked, pendingState, landChunks, targets);
+            return new TeamLinkEntry(ftbTeamId, lcTeamId, legacyAccount, protectionLocked, pendingState, regionOrder, regions, chunkRegions, chunkOwnership, targets, unsettledChunks, freshlyClaimedChunks);
+        }
+
+        TeamLinkEntry withUnsettledChunks(Set<String> updatedUnsettledChunks) {
+            return new TeamLinkEntry(ftbTeamId, lcTeamId, legacyAccount, protectionLocked, pendingState, regionOrder, regions, chunkRegions, chunkOwnership, warTargets, updatedUnsettledChunks, freshlyClaimedChunks);
+        }
+
+        TeamLinkEntry withFreshlyClaimedChunks(Set<String> updatedFreshlyClaimedChunks) {
+            return new TeamLinkEntry(ftbTeamId, lcTeamId, legacyAccount, protectionLocked, pendingState, regionOrder, regions, chunkRegions, chunkOwnership, warTargets, unsettledChunks, updatedFreshlyClaimedChunks);
         }
     }
 }

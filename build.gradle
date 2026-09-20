@@ -54,13 +54,23 @@ neoForge {
         client {
             client()
             ideName = 'Client 1'
+            // Split from run/ (the server's directory): client-only test mods like
+            // Sodium/Iris crash a dedicated server hard (Sodium's PreLaunchChecks
+            // service unconditionally touches LWJGL, which a server classpath simply
+            // doesn't have) - run/mods must stay server-safe, so Client 1 needs its
+            // own mods folder just like Client 2 already has.
+            gameDirectory = project.layout.projectDirectory.dir('run-client1')
             systemProperty 'neoforge.enabledGameTestNamespaces', project.mod_id
-            // "neoforge-" in the default ignoreList also matches Xaero jars like
-            // xaeros-minimap-neoforge-1.21.1-*.jar — narrow it to "neoforge-21."
-            // so only the actual NeoForge runtime jars are skipped.
-            jvmArgument '-DignoreList=mixinextras-neoforge-0.5.3.jar,client-extra,neoforge-21.'
+            // "neoforge-" in MDG's own default ignoreList also matches Xaero jars like
+            // xaeros-minimap-neoforge-1.21.1-*.jar. Using jvmArgument('-DignoreList=...')
+            // here just appended a second -DignoreList after the plugin's own default one,
+            // and the later one silently wins (both end up on the command line, last -D for
+            // the same key overrides the earlier one) — so the narrowed value never took
+            // effect. systemProperty(...) instead writes into the same managed property map
+            // as the plugin's default, so it actually overrides it.
+            systemProperty 'ignoreList', 'mixinextras-neoforge-0.5.3.jar,client-extra,neoforge-21.'
             programArgument '--username'
-            programArgument 'Dev'
+            programArgument 'Kestrel92'
             programArgument '--width'
             programArgument devClientWidth
             programArgument '--height'
@@ -72,9 +82,9 @@ neoForge {
             ideName = 'Client 2'
             gameDirectory = project.layout.projectDirectory.dir('run-client2')
             systemProperty 'neoforge.enabledGameTestNamespaces', project.mod_id
-            jvmArgument '-DignoreList=mixinextras-neoforge-0.5.3.jar,client-extra,neoforge-21.'
+            systemProperty 'ignoreList', 'mixinextras-neoforge-0.5.3.jar,client-extra,neoforge-21.'
             programArgument '--username'
-            programArgument 'DevPlayer2'
+            programArgument 'WillowDusk'
             programArgument '--width'
             programArgument devClientWidth
             programArgument '--height'
@@ -85,6 +95,12 @@ neoForge {
             server()
             programArgument '--nogui'
             systemProperty 'neoforge.enabledGameTestNamespaces', project.mod_id
+            // owo-lib falls back to Owo.DEBUG (true in any dev run) for whether its
+            // handshake is required, which then makes it skip registering the
+            // "owo:handshake_off" channel that a normally-packaged (non-dev) client
+            // always registers - causing "channel missing on server" disconnects.
+            // Force it off explicitly so this dev server behaves like production.
+            systemProperty 'owo.handshake.enabled', 'false'
             // NOTE: dev server config is applied in-process by scripts/run-server.ps1
             // before Gradle starts. We intentionally do NOT wire applyDevServerConfig
             // as taskBefore here: spawning a fresh powershell.exe from the Gradle Exec
@@ -101,6 +117,18 @@ neoForge {
 
 configurations {
     runtimeClasspath.extendsFrom localRuntime
+    // Client-only test mods (Xaero's Minimap/World Map + the FTB Chunks compat addon):
+    // resolved here and dropped straight into run/mods (see copyXaeroTestMods below)
+    // instead of via clientAdditionalRuntimeClasspath. MDG's "userdev mods and services"
+    // legacy-classpath locator silently skipped these jars as non-candidates even though
+    // they carry a valid META-INF/neoforge.mods.toml (confirmed via -Dforge.logging.marker.scan
+    // debug tracing) — root cause not pinned down in FML/MDG sources, but the real
+    // mods-folder locator (the same one that scans a player's mods/ folder) reliably
+    // picks them up, so we just use that instead.
+    xaeroTestMods {
+        canBeConsumed = false
+        canBeResolved = true
+    }
 }
 
 repositories {
@@ -137,6 +165,10 @@ repositories {
 }
 
 dependencies {
+    // Forces the resolved architectury-neoforge version above the 13.0.8 that
+    // ftb-library/teams/chunks all transitively request (see gradle.properties).
+    implementation "dev.architectury:architectury-neoforge:${architectury_version}"
+
     implementation "dev.ftb.mods:ftb-library-neoforge:${ftb_library_version}"
     implementation "dev.ftb.mods:ftb-teams-neoforge:${ftb_teams_version}"
     implementation "dev.ftb.mods:ftb-chunks-neoforge:${ftb_chunks_version}"
@@ -144,18 +176,41 @@ dependencies {
     compileOnly "maven.modrinth:lightmans-currency:${lightmanscurrency_version}"
     localRuntime "maven.modrinth:lightmans-currency:${lightmanscurrency_version}"
 
-    // Client-only test-client mods: Xaero's Minimap + World Map and the
-    // FTB Chunks compat addon that renders FTB Chunks claims on Xaero's maps.
-    // Added to the per-run additional runtime classpath of the client runs only,
-    // so they never load on the dedicated server (they are client-side mods).
-    clientAdditionalRuntimeClasspath "maven.modrinth:xaeros-minimap:${xaeros_minimap_version}"
-    clientAdditionalRuntimeClasspath "maven.modrinth:xaeros-world-map:${xaeros_worldmap_version}"
-    clientAdditionalRuntimeClasspath "curse.maven:ftb-chunks-x-xaeros-compat-${ftb_xaero_compat_project}:${ftb_xaero_compat_file}"
+    // Xaero's World Map + the FTB Chunks compat addon are an OPTIONAL
+    // integration (see lc_ftb_hook_xaero.mixins.json, required=false): compileOnly
+    // so the marketplace/region mixins targeting their classes can compile,
+    // but never bundled or required at runtime for players without them installed.
+    compileOnly "maven.modrinth:xaeros-world-map:${xaeros_worldmap_version}"
+    compileOnly "curse.maven:ftb-chunks-x-xaeros-compat-${ftb_xaero_compat_project}:${ftb_xaero_compat_file}"
+    // xaero.lib.* (e.g. ScreenBase, which xaero.map.gui.GuiMap extends) ships only via
+    // JarJar inside xaeros-world-map's own jar (META-INF/jarjar/xaerolib-*.jar), not as
+    // a normal Maven dependency Gradle can resolve - extracted once into libs/.
+    compileOnly files('libs/xaerolib-neoforge-1.21.1-1.7.3.jar')
 
-    client2AdditionalRuntimeClasspath "maven.modrinth:xaeros-minimap:${xaeros_minimap_version}"
-    client2AdditionalRuntimeClasspath "maven.modrinth:xaeros-world-map:${xaeros_worldmap_version}"
-    client2AdditionalRuntimeClasspath "curse.maven:ftb-chunks-x-xaeros-compat-${ftb_xaero_compat_project}:${ftb_xaero_compat_file}"
+    // Client-only test mods: Xaero's Minimap + World Map and the FTB Chunks compat
+    // addon that renders FTB Chunks claims on Xaero's maps. Dropped into run/mods and
+    // run-client2/mods by copyXaeroTestMods, never onto the server's classpath.
+    xaeroTestMods "maven.modrinth:xaeros-minimap:${xaeros_minimap_version}"
+    xaeroTestMods "maven.modrinth:xaeros-world-map:${xaeros_worldmap_version}"
+    xaeroTestMods "curse.maven:ftb-chunks-x-xaeros-compat-${ftb_xaero_compat_project}:${ftb_xaero_compat_file}"
 }
+
+def copyXaeroTestMods = tasks.register('copyXaeroTestMods', Copy) {
+    group = 'neoforge'
+    description = 'Drops Xaero\'s Minimap/World Map + the FTB Chunks compat addon into run-client1/mods for Client 1'
+    from configurations.xaeroTestMods
+    into layout.projectDirectory.dir('run-client1/mods')
+}
+
+def copyXaeroTestModsClient2 = tasks.register('copyXaeroTestModsClient2', Copy) {
+    group = 'neoforge'
+    description = 'Drops Xaero\'s Minimap/World Map + the FTB Chunks compat addon into run-client2/mods for Client 2'
+    from configurations.xaeroTestMods
+    into layout.projectDirectory.dir('run-client2/mods')
+}
+
+tasks.named('runClient').configure { dependsOn(copyXaeroTestMods) }
+tasks.named('runClient2').configure { dependsOn(copyXaeroTestModsClient2) }
 
 var generateModMetadata = tasks.register('generateModMetadata', ProcessResources) {
     var replaceProperties = [

@@ -27,15 +27,51 @@ import net.minecraft.server.level.ServerPlayer;
 import java.util.UUID;
 
 public class ChunkClaimHandler {
+    // FTB Chunks fires BEFORE_CLAIM/BEFORE_UNCLAIM strictly before the claim
+    // registry is mutated, and only afterwards clears ChunkTeamData's cached
+    // getClaimedChunks() collection. Reading the chunk count in the AFTER_*
+    // handlers therefore risks a stale cache still including (or excluding)
+    // the chunk that just changed. We capture the accurate pre-mutation
+    // count here instead of reconstructing it after the fact.
+    private int pendingClaimCount = -1;
+    private int pendingUnclaimCount = -1;
+
     public ChunkClaimHandler() {
         ClaimedChunkEvent.BEFORE_CLAIM.register(this::beforeClaim);
+        ClaimedChunkEvent.BEFORE_UNCLAIM.register(this::beforeUnclaim);
         ClaimedChunkEvent.AFTER_CLAIM.register(this::afterClaim);
         ClaimedChunkEvent.AFTER_UNCLAIM.register(this::afterUnclaim);
     }
 
     private void afterClaim(CommandSourceStack source, ClaimedChunk chunk) {
+        Team claimingTeam = chunk.getTeamData().getTeam();
+        if (claimingTeam != null) {
+            MinecraftServer server = source.getServer();
+            String claimedChunkKey = dev.malik.lcftbhook.data.ChunkPosKey.encode(chunk.getPos());
+            dev.malik.lcftbhook.data.FtbHookSavedData.get(server).markChunkUnsettled(
+                    claimingTeam.getTeamId(), claimedChunkKey
+            );
+            // Marketplace-only cooldown - a fresh CLAIM can't be listed until
+            // settled, unlike a fresh private buy (see FtbHookSavedData's
+            // freshly-claimed-chunks section).
+            dev.malik.lcftbhook.data.FtbHookSavedData.get(server).markChunkFreshlyClaimed(
+                    claimingTeam.getTeamId(), claimedChunkKey
+            );
+            // Deferred to a single broadcast in ClaimBatchContext.flush() during a
+            // bulk claim (mirrors syncClaimUi's own batch-vs-single handling below) -
+            // otherwise a large claim batch would broadcast the full unsettled-chunk
+            // set to every player once per chunk claimed.
+            if (ClaimBatchContext.isExecuting()) {
+                ClaimBatchContext.recordUnsettledChunk();
+            } else {
+                dev.malik.lcftbhook.service.MarketplaceService.broadcastUnsettledChunks(server);
+            }
+        }
         if (ClaimBatchContext.isExecuting()) {
-            int countBeforeClaim = chunk.getTeamData().getClaimedChunks().size() - 1;
+            int countBeforeClaim = pendingClaimCount >= 0
+                    ? pendingClaimCount
+                    : chunk.getTeamData().getClaimedChunks().size() - 1;
+            pendingClaimCount = -1;
             if (FreeChunkAllowance.isClaimFree(countBeforeClaim)) {
                 ClaimBatchContext.recordClaimFree();
             }
@@ -46,16 +82,22 @@ public class ChunkClaimHandler {
 
     private CompoundEventResult<ClaimResult> beforeClaim(CommandSourceStack source, ClaimedChunk chunk) {
         int currentCount = chunk.getTeamData().getClaimedChunks().size();
+        pendingClaimCount = currentCount;
         if (FreeChunkAllowance.isClaimFree(currentCount)) {
             return CompoundEventResult.pass();
         }
-        return handlePurchase(source, LCFtbHookConfig.SERVER.claimPrice.get());
+        return handlePurchase(source, dev.malik.lcftbhook.service.ClaimPricingService.priceForClaim(currentCount));
+    }
+
+    private CompoundEventResult<ClaimResult> beforeUnclaim(CommandSourceStack source, ClaimedChunk chunk) {
+        pendingUnclaimCount = chunk.getTeamData().getClaimedChunks().size();
+        return CompoundEventResult.pass();
     }
 
     private void afterUnclaim(CommandSourceStack source, ClaimedChunk chunk) {
         MinecraftServer unclaimServer = source.getServer();
         if (unclaimServer != null) {
-            dev.malik.lcftbhook.service.LandChunkService.onChunkUnclaimed(unclaimServer, chunk);
+            dev.malik.lcftbhook.service.RegionService.onChunkUnclaimed(unclaimServer, chunk);
         }
 
         long refundAmount = calculateUnclaimRefund(chunk);
@@ -119,12 +161,15 @@ public class ChunkClaimHandler {
     }
 
     private long calculateUnclaimRefund(ClaimedChunk chunk) {
-        int countBeforeUnclaim = chunk.getTeamData().getClaimedChunks().size() + 1;
+        int countBeforeUnclaim = pendingUnclaimCount >= 0
+                ? pendingUnclaimCount
+                : chunk.getTeamData().getClaimedChunks().size() + 1;
+        pendingUnclaimCount = -1;
         if (!FreeChunkAllowance.shouldRefundOnUnclaim(countBeforeUnclaim)) {
             return 0L;
         }
 
-        long claimPrice = LCFtbHookConfig.SERVER.claimPrice.get();
+        long claimPrice = dev.malik.lcftbhook.service.ClaimPricingService.priceForClaim(countBeforeUnclaim - 1);
         double refundRatio = LCFtbHookConfig.SERVER.unclaimRefundRatio.get();
         if (claimPrice <= 0 || refundRatio <= 0) {
             return 0L;

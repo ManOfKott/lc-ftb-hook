@@ -1,16 +1,18 @@
 package dev.malik.lcftbhook.service;
 
 import dev.ftb.mods.ftbteams.api.Team;
-import dev.ftb.mods.ftbteams.api.property.TeamProperty;
 import dev.malik.lcftbhook.data.FtbHookSavedData;
+import dev.malik.lcftbhook.data.ProtectionProperty;
+import dev.malik.lcftbhook.data.Region;
+import dev.malik.lcftbhook.data.RegionPropertyKey;
 import dev.malik.lcftbhook.data.TeamPendingState;
+import dev.malik.lcftbhook.service.ProtectionDismantleOrder.DismantleStep;
 import dev.malik.lcftbhook.teams.FtbTeamCatalog;
 import net.minecraft.network.chat.Component;
 import net.minecraft.server.MinecraftServer;
 
 import java.util.ArrayList;
 import java.util.Comparator;
-import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -45,17 +47,17 @@ public final class UpkeepPriorityService {
         List<PriorityEntry> entries = new ArrayList<>();
         int priority = 1;
 
-        for (TeamProperty<?> property : ProtectionDismantleOrder.restoreOrder()) {
-            if (!ProtectionRollbackService.isLiveProtectionBillable(team, property)) {
+        for (DismantleStep step : ProtectionDismantleOrder.restoreOrder(server, teamId)) {
+            if (!ProtectionRollbackService.isLiveProtectionBillable(savedData, teamId, step.regionId(), step.property())) {
                 continue;
             }
-            String key = ProtectionPricing.propertyKey(property);
+            String key = RegionPropertyKey.encode(step.regionId(), step.property().id());
             entries.add(new PriorityEntry(
                     priority++,
                     EntryKind.PROTECTION,
                     key,
-                    protectionLabel(key),
-                    protectionUpkeepCopper(server, team, pendingState, property)
+                    protectionLabel(savedData, teamId, step),
+                    protectionUpkeepCopper(server, team, pendingState, step)
             ));
         }
 
@@ -82,35 +84,34 @@ public final class UpkeepPriorityService {
         return entries;
     }
 
-    private static Component protectionLabel(String key) {
-        return Component.translatable("message.lc_ftb_hook.upkeep_priority.protection." + key);
+    private static Component protectionLabel(FtbHookSavedData savedData, UUID teamId, DismantleStep step) {
+        Region region = savedData.getRegion(teamId, step.regionId());
+        String regionName = region != null ? region.name() : Region.DEFAULT_NAME;
+        return Component.translatable("message.lc_ftb_hook.upkeep_priority.protection." + step.property().id())
+                .append(Component.literal(" (" + regionName + ")"));
     }
 
     private static long protectionUpkeepCopper(
             MinecraftServer server,
             Team team,
             TeamPendingState pendingState,
-            TeamProperty<?> property
+            DismantleStep step
     ) {
-        ProtectionPricing.ChunkCounts counts = ProtectionPricing.countBillableChunks(server, team);
-        Map<String, String> pricing = ProtectionRollbackService.pricingProperties(team, pendingState);
-        long withLive = ProtectionPricing.calculateProtectionCopper(team.getProperties(), pricing, counts);
+        ProtectionPricing.ChunkCounts counts = ProtectionPricing.countBillableChunks(server, team, pendingState);
+        Map<String, String> pricing = ProtectionRollbackService.pricingProperties(server, team, pendingState);
+        long withLive = ProtectionPricing.calculateProtectionCopper(server, team.getTeamId(),
+                new TeamPendingState(pricing, pendingState.pendingForceLoads(), pendingState.pendingForceUnloads(),
+                        pendingState.pendingRegionAssignments(), pendingState.pendingWarDeclares(), pendingState.pendingWarEnds()),
+                counts);
 
-        String key = ProtectionPricing.propertyKey(property);
-        Map<String, String> atMinimum = new HashMap<>(pricing);
-        atMinimum.put(key, minimumSerialized(property));
+        String key = RegionPropertyKey.encode(step.regionId(), step.property().id());
+        java.util.Map<String, String> atMinimum = new java.util.HashMap<>(pricing);
+        atMinimum.put(key, step.property().minimumSerialized());
 
-        long atMin = ProtectionPricing.calculateProtectionCopper(team.getProperties(), atMinimum, counts);
+        long atMin = ProtectionPricing.calculateProtectionCopper(server, team.getTeamId(),
+                new TeamPendingState(atMinimum, pendingState.pendingForceLoads(), pendingState.pendingForceUnloads(),
+                        pendingState.pendingRegionAssignments(), pendingState.pendingWarDeclares(), pendingState.pendingWarEnds()),
+                counts);
         return Math.max(0L, withLive - atMin);
-    }
-
-    private static String minimumSerialized(TeamProperty<?> property) {
-        if (property instanceof dev.ftb.mods.ftbteams.api.property.BooleanProperty) {
-            return ProtectionPricing.serializePropertyValue(property, true);
-        }
-        return ProtectionPricing.serializePropertyValue(
-                property,
-                dev.ftb.mods.ftbteams.api.property.PrivacyMode.PUBLIC
-        );
     }
 }

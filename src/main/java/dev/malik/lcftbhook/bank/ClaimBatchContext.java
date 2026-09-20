@@ -96,6 +96,14 @@ public final class ClaimBatchContext {
         state.uiSyncNeeded = true;
     }
 
+    /** A chunk in this batch became unsettled (see {@code FtbHookSavedData#markChunkUnsettled}) - broadcast once in {@link #flush}, not once per chunk. */
+    public static void recordUnsettledChunk() {
+        BatchState state = EXECUTING.get();
+        if (state != null) {
+            state.unsettledBroadcastNeeded = true;
+        }
+    }
+
     public static void recordUnclaim(long refundCopper) {
         BatchState state = EXECUTING.get();
         if (state == null) {
@@ -115,13 +123,6 @@ public final class ClaimBatchContext {
         state.claimUnitPriceCopper = unitPriceCopper;
         state.insufficientBalance = MoneyMessageUtil.formatBalance(account);
         state.uiSyncNeeded = true;
-    }
-
-    public static void markUiSyncNeeded() {
-        BatchState state = EXECUTING.get();
-        if (state != null) {
-            state.uiSyncNeeded = true;
-        }
     }
 
     public static void flush(@Nullable ServerPlayer player) {
@@ -145,6 +146,9 @@ public final class ClaimBatchContext {
 
             if (state.uiSyncNeeded) {
                 ClaimPriceSync.syncToPlayer(player);
+            }
+            if (state.unsettledBroadcastNeeded) {
+                dev.malik.lcftbhook.service.MarketplaceService.broadcastUnsettledChunks(player.server);
             }
         } finally {
             EXECUTING.remove();
@@ -262,6 +266,7 @@ public final class ClaimBatchContext {
         @Nullable
         private Component insufficientBalance;
         private boolean uiSyncNeeded;
+        private boolean unsettledBroadcastNeeded;
 
         private BatchState(RequestChunkChangePacket.ChunkChangeOp operation, UUID playerId) {
             this.operation = operation;

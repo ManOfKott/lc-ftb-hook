@@ -11,10 +11,11 @@ out/
 bin/
 
 # Decompiled class files (IDE artifact)
-dev/
+/dev/
 
 # Runtime
 run/
+run-client1/
 run-client2/
 run-data/
 logs/

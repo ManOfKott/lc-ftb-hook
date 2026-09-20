@@ -5,8 +5,8 @@
   "mixins": [
     "ClaimedChunkManagerImplDeleteTeamMixin",
     "ClaimedChunkManagerProtectionMixin",
-    "ClaimedChunkProtectionMixin",
-    "ChunkTeamDataCanPlayerUseMixin",
+    "ClaimedChunkRegionProtectionMixin",
+    "ChunkTeamDataRegionPrivacyMixin",
     "FTBChunksPlayerJoinedPartyMixin",
     "FTBChunksPvPMixin",
     "PartyTeamRankSyncMixin",
@@ -16,20 +16,16 @@
   ],
     "client": [
     "client.ChunkScreenPanelAccessor",
-    "ChunkScreenCustomBottomPanelMixin",
     "ChunkScreenMixin",
     "ChunkScreenPanelMixin",
     "client.ChunkChangeResponsePacketClientMixin",
     "client.ChunkScreenPanelChunkButtonMixin",
-    "client.ConfigGroupAccessor",
     "client.EditConfigScreenAccessor",
     "client.EditConfigScreenConfigEntryButtonMixin",
-    "client.EditConfigScreenMixin",
-    "client.EditConfigScreenTopPanelMixin",
-    "client.EditConfigScreenParentTopPanelMixin",
+    "client.MapChunkAccessor",
+    "client.MapChunkRegionBorderMixin",
     "client.MyTeamScreenMixin",
-    "client.MyTeamScreenSettingsButtonMixin",
-    "client.RenderMapImageTaskLandTintMixin"
+    "client.MyTeamScreenSettingsButtonMixin"
   ],
   "injectors": {
     "defaultRequire": 1

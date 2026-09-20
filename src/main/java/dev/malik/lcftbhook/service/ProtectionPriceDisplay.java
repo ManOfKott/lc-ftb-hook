@@ -1,93 +1,22 @@
 package dev.malik.lcftbhook.service;
 
-import dev.ftb.mods.ftbteams.api.property.PrivacyMode;
-import dev.ftb.mods.ftbteams.api.property.TeamProperty;
 import dev.malik.lcftbhook.client.ClientClaimPrices;
-import dev.malik.lcftbhook.client.ClientWarState;
-import dev.malik.lcftbhook.config.LCFtbHookConfig;
-import dev.malik.lcftbhook.network.WarEntryStatus;
 import dev.malik.lcftbhook.util.MoneyUtil;
-import net.minecraft.ChatFormatting;
 import net.minecraft.network.chat.Component;
-import net.minecraft.network.chat.TextColor;
 import net.neoforged.api.distmarker.Dist;
 import net.neoforged.fml.loading.FMLEnvironment;
 
 import javax.annotation.Nullable;
 
+/**
+ * Small shared formatting helpers still needed after protection editing moved
+ * out of FTB's generic properties screen and into the Region screens (see
+ * plan A6) - the upkeep-period label (used by the war screen, upkeep
+ * commands, and the FTB Chunks claim screen tooltip) and the claim-visibility
+ * config-id normalizer.
+ */
 public final class ProtectionPriceDisplay {
     private ProtectionPriceDisplay() {
-    }
-
-    @Nullable
-    public static Long pricePerChunkForConfigId(String configId) {
-        String key = baseProtectionKey(configId);
-        if (key == null) {
-            return null;
-        }
-
-        if (FMLEnvironment.dist == Dist.CLIENT) {
-            Long synced = ClientClaimPrices.protectionPrice(key);
-            if (synced != null) {
-                return synced;
-            }
-            return ClientClaimPrices.defaultProtectionPrice(key);
-        }
-
-        return switch (key) {
-            case "allow_mob_griefing" -> LCFtbHookConfig.SERVER.mobGriefProtectionPrice.get();
-            case "allow_explosions" -> LCFtbHookConfig.SERVER.explosionProtectionPrice.get();
-            case "allow_pvp" -> LCFtbHookConfig.SERVER.pvpDisablePrice.get();
-            case "block_interact_mode" -> LCFtbHookConfig.SERVER.blockInteractProtectionPrice.get();
-            case "block_edit_mode" -> LCFtbHookConfig.SERVER.blockEditProtectionPrice.get();
-            case "entity_interact_mode" -> LCFtbHookConfig.SERVER.entityInteractProtectionPrice.get();
-            default -> null;
-        };
-    }
-
-    @Nullable
-    public static Long pricePerChunkForProperty(TeamProperty<?> property) {
-        return pricePerChunkForConfigId(ProtectionPricing.propertyKey(property));
-    }
-
-    public static boolean isProtectionConfigId(String configId) {
-        return pricePerChunkForConfigId(configId) != null;
-    }
-
-    public static boolean isActiveBillableSetting(String configId, Object value) {
-        String key = baseProtectionKey(configId);
-        if (key == null) {
-            return false;
-        }
-
-        return switch (key) {
-            case "allow_mob_griefing", "allow_explosions", "allow_pvp" ->
-                    value instanceof Boolean enabled && !enabled;
-            case "block_interact_mode", "block_edit_mode", "entity_interact_mode" ->
-                    value instanceof PrivacyMode mode && mode != PrivacyMode.PUBLIC;
-            default -> false;
-        };
-    }
-
-    /**
-     * For {@code allow_*} booleans, FTB colors {@code true} green even though
-     * {@code true} means the protection is off. Green = protection active.
-     */
-    @Nullable
-    public static TextColor protectionAllowBooleanColor(String configId, Object value) {
-        if (!(value instanceof Boolean) || !isAllowStyleProtectionKey(configId)) {
-            return null;
-        }
-        return TextColor.fromLegacyFormat(
-                isActiveBillableSetting(configId, value) ? ChatFormatting.GREEN : ChatFormatting.RED
-        );
-    }
-
-    public static boolean isAllowStyleProtectionKey(String configId) {
-        String key = baseProtectionKey(configId);
-        return "allow_mob_griefing".equals(key)
-                || "allow_explosions".equals(key)
-                || "allow_pvp".equals(key);
     }
 
     public static Component formatPricePerChunk(long copper) {
@@ -100,9 +29,26 @@ public final class ProtectionPriceDisplay {
             if (FMLEnvironment.dist == Dist.CLIENT) {
                 return formatUpkeepPeriodLabel(60);
             }
-            minutes = LCFtbHookConfig.SERVER.upkeepPeriodMinutes.get();
+            minutes = dev.malik.lcftbhook.config.LCFtbHookConfig.SERVER.upkeepPeriodMinutes.get();
         }
         return formatUpkeepPeriodLabel(minutes);
+    }
+
+    /**
+     * "In X minutes/hours/days" for the next upkeep settlement pass - server-
+     * only value (there's no single "next due" for a config-side default the
+     * way there is for the period length itself), so on the server this
+     * always reports unknown; only meaningful client-side after a sync.
+     */
+    public static Component nextUpkeepLabel() {
+        int minutes = FMLEnvironment.dist == Dist.CLIENT ? ClientClaimPrices.minutesUntilNextUpkeep() : -1;
+        if (minutes < 0) {
+            return Component.translatable("gui.lc_ftb_hook.regions.upkeep_next_unknown");
+        }
+        if (minutes <= 0) {
+            return Component.translatable("gui.lc_ftb_hook.regions.upkeep_next_due_now");
+        }
+        return Component.translatable("gui.lc_ftb_hook.regions.upkeep_next_payment", formatUpkeepPeriodLabel(minutes));
     }
 
     public static Component formatUpkeepPeriodLabel(int minutes) {
@@ -127,19 +73,6 @@ public final class ProtectionPriceDisplay {
         return Component.translatable("message.lc_ftb_hook.upkeep_period.minutes", minutes);
     }
 
-    /**
-     * Normalizes a config id and strips the {@code land_} prefix so build and
-     * land protections resolve to the same price entry.
-     */
-    @Nullable
-    public static String baseProtectionKey(String configId) {
-        String key = normalizePropertyKey(configId);
-        if (key == null) {
-            return null;
-        }
-        return key.startsWith("land_") ? key.substring("land_".length()) : key;
-    }
-
     @Nullable
     public static String normalizePropertyKey(String configId) {
         if (configId == null || configId.isBlank()) {
@@ -155,112 +88,10 @@ public final class ProtectionPriceDisplay {
         if (slash >= 0) {
             key = key.substring(slash + 1);
         }
-        // Config paths from FTB Library group configs are dot-separated
-        // (e.g. "ftbteamsconfig.ftbchunks.allow_pvp").
         int dot = key.lastIndexOf('.');
         if (dot >= 0) {
             key = key.substring(dot + 1);
         }
         return key.isBlank() ? null : key;
-    }
-
-    /**
-     * Resolves the protection property key for an FTB config entry. Prefer
-     * {@code config.id} when it matches a known protection property: land
-     * entries live in the {@code lc_ftb_hook} subgroup and their group path
-     * alone ({@code lc_ftb_hook}) must not be used for pending lookups.
-     */
-    public static String protectionPropertyKey(@Nullable String configId, @Nullable String configPath) {
-        // Land entries live under ftbteamsconfig.lc_ftb_hook.* — prefer the
-        // path segment so we never confuse them with build keys like
-        // block_edit_mode (land_block_edit_mode ends with that suffix).
-        if (configPath != null && !configPath.isBlank()) {
-            String fromPath = normalizePropertyKey(configPath);
-            if (fromPath != null && fromPath.startsWith("land_") && isProtectionPropertyKey(fromPath)) {
-                return fromPath;
-            }
-        }
-
-        String fromId = normalizePropertyKey(configId);
-        if (isProtectionPropertyKey(fromId)) {
-            return fromId;
-        }
-
-        String fromPath = normalizePropertyKey(configPath);
-        if (isProtectionPropertyKey(fromPath)) {
-            return fromPath;
-        }
-
-        if (configPath != null && !configPath.isBlank()) {
-            return configPath;
-        }
-        return configId != null ? configId : "";
-    }
-
-    public static boolean isProtectionPropertyKey(@Nullable String key) {
-        if (key == null || key.isBlank()) {
-            return false;
-        }
-        for (TeamProperty<?> property : ProtectionPricing.PROTECTION_PROPERTIES) {
-            if (ProtectionPricing.propertyKey(property).equals(key)) {
-                return true;
-            }
-        }
-        return false;
-    }
-
-    public static boolean isLandProtectionPropertyKey(@Nullable String configId) {
-        String key = normalizePropertyKey(configId);
-        return key != null && key.startsWith("land_");
-    }
-
-    public static int landChunkGroupSize() {
-        if (FMLEnvironment.dist == Dist.CLIENT) {
-            return ClientClaimPrices.landChunkGroupSize();
-        }
-        return ProtectionPricing.landChunkGroupSize();
-    }
-
-    public static int incomingWarCount() {
-        if (FMLEnvironment.dist != Dist.CLIENT || !ClientWarState.warModuleEnabled()) {
-            return 0;
-        }
-        int count = 0;
-        for (var entry : ClientWarState.incoming()) {
-            if (entry.status() == WarEntryStatus.ACTIVE) {
-                count++;
-            }
-        }
-        return count;
-    }
-
-    /**
-     * Incoming wars scale displayed base upkeep by {@code 1 + sum(i=0..k-1) l^i} for {@code k} declarers.
-     */
-    public static long effectiveProtectionPrice(long baseCopper) {
-        if (baseCopper <= 0) {
-            return baseCopper;
-        }
-        int incoming = incomingWarCount();
-        if (incoming <= 0) {
-            return baseCopper;
-        }
-        double factor = WarUpkeepMath.totalUpkeepFactor(incoming, ClientWarState.warCostMultiplier());
-        return (long) Math.floor(baseCopper * factor);
-    }
-
-    public static String incomingWarFactorLabel() {
-        if (FMLEnvironment.dist != Dist.CLIENT || !ClientWarState.warModuleEnabled()) {
-            return "1";
-        }
-        int k = incomingWarCount();
-        if (k <= 0) {
-            return "1";
-        }
-        return WarUpkeepMath.formatTotalUpkeepFactor(k, ClientWarState.warCostMultiplier());
-    }
-
-    public static boolean showsIncomingWarSurcharge() {
-        return incomingWarCount() > 0;
     }
 }

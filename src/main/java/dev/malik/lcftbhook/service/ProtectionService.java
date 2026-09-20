@@ -13,18 +13,9 @@ import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerPlayer;
 
 public final class ProtectionService {
-    private static final ThreadLocal<Boolean> REVERTING = ThreadLocal.withInitial(() -> false);
     private static final ThreadLocal<Boolean> APPLYING = ThreadLocal.withInitial(() -> false);
 
     private ProtectionService() {
-    }
-
-    public static boolean isReverting() {
-        return REVERTING.get();
-    }
-
-    public static boolean isApplying() {
-        return APPLYING.get();
     }
 
     public static void setApplying(boolean applying) {
@@ -32,15 +23,6 @@ public final class ProtectionService {
             APPLYING.set(true);
         } else {
             APPLYING.remove();
-        }
-    }
-
-    public static void runReverting(Runnable action) {
-        REVERTING.set(true);
-        try {
-            action.run();
-        } finally {
-            REVERTING.remove();
         }
     }
 
@@ -62,11 +44,6 @@ public final class ProtectionService {
         }
         IBankAccount account = BankAccountHelper.getAccountForTeam(server, team);
         return account.getMoneyStorage().containsValue(cost);
-    }
-
-    public static void enforceInsufficientFunds(MinecraftServer server, Team team) {
-        FtbHookSavedData.get(server).setProtectionLocked(team.getTeamId(), true);
-        notifyTeam(server, team, "message.lc_ftb_hook.protection_locked");
     }
 
     public static void tryUnlock(MinecraftServer server, Team team) {

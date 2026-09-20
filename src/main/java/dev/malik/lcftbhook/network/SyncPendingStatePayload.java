@@ -13,16 +13,16 @@ import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Map;
 import java.util.Set;
+import java.util.UUID;
 
 public record SyncPendingStatePayload(
         Map<String, String> pendingProperties,
         Set<String> pendingForceLoads,
         Set<String> pendingForceUnloads,
-        Set<String> pendingLandChunks,
-        Set<String> pendingBuildChunks
+        Map<String, UUID> pendingRegionAssignments
 ) implements CustomPacketPayload {
     public static final Type<SyncPendingStatePayload> TYPE = new Type<>(ResourceLocation.fromNamespaceAndPath(LCFtbHook.MOD_ID, "sync_pending_state"));
-    public static final SyncPendingStatePayload EMPTY = new SyncPendingStatePayload(Map.of(), Set.of(), Set.of(), Set.of(), Set.of());
+    public static final SyncPendingStatePayload EMPTY = new SyncPendingStatePayload(Map.of(), Set.of(), Set.of(), Map.of());
     public static final StreamCodec<FriendlyByteBuf, SyncPendingStatePayload> STREAM_CODEC = StreamCodec.of(
             (buffer, payload) -> {
                 buffer.writeVarInt(payload.pendingProperties.size());
@@ -32,8 +32,11 @@ public record SyncPendingStatePayload(
                 }
                 buffer.writeCollection(payload.pendingForceLoads, FriendlyByteBuf::writeUtf);
                 buffer.writeCollection(payload.pendingForceUnloads, FriendlyByteBuf::writeUtf);
-                buffer.writeCollection(payload.pendingLandChunks, FriendlyByteBuf::writeUtf);
-                buffer.writeCollection(payload.pendingBuildChunks, FriendlyByteBuf::writeUtf);
+                buffer.writeVarInt(payload.pendingRegionAssignments.size());
+                for (var entry : payload.pendingRegionAssignments.entrySet()) {
+                    buffer.writeUtf(entry.getKey());
+                    buffer.writeUUID(entry.getValue());
+                }
             },
             buffer -> {
                 int propertyCount = buffer.readVarInt();
@@ -41,13 +44,14 @@ public record SyncPendingStatePayload(
                 for (int i = 0; i < propertyCount; i++) {
                     properties.put(buffer.readUtf(), buffer.readUtf());
                 }
-                return new SyncPendingStatePayload(
-                        properties,
-                        buffer.readCollection(HashSet::new, FriendlyByteBuf::readUtf),
-                        buffer.readCollection(HashSet::new, FriendlyByteBuf::readUtf),
-                        buffer.readCollection(HashSet::new, FriendlyByteBuf::readUtf),
-                        buffer.readCollection(HashSet::new, FriendlyByteBuf::readUtf)
-                );
+                Set<String> forceLoads = buffer.readCollection(HashSet::new, FriendlyByteBuf::readUtf);
+                Set<String> forceUnloads = buffer.readCollection(HashSet::new, FriendlyByteBuf::readUtf);
+                int assignmentCount = buffer.readVarInt();
+                Map<String, UUID> assignments = new HashMap<>(assignmentCount);
+                for (int i = 0; i < assignmentCount; i++) {
+                    assignments.put(buffer.readUtf(), buffer.readUUID());
+                }
+                return new SyncPendingStatePayload(properties, forceLoads, forceUnloads, assignments);
             }
     );
 
@@ -58,17 +62,12 @@ public record SyncPendingStatePayload(
 
     public static void handleClient(SyncPendingStatePayload payload, IPayloadContext context) {
         context.enqueueWork(() -> {
-            LCFtbHook.LOGGER.info("[PendingDebug/Client] received pending state: properties={}, forceLoads={}, forceUnloads={}, landChunks={}, buildChunks={}",
-                    payload.pendingProperties, payload.pendingForceLoads, payload.pendingForceUnloads,
-                    payload.pendingLandChunks, payload.pendingBuildChunks);
             ClientPendingState.update(
                     payload.pendingProperties,
                     payload.pendingForceLoads,
                     payload.pendingForceUnloads,
-                    payload.pendingLandChunks,
-                    payload.pendingBuildChunks
+                    payload.pendingRegionAssignments
             );
-            PendingStateUiRefresh.syncSelfTeamOpenScreen();
             PendingStateUiRefresh.refreshOpenScreens();
         });
     }

@@ -12,13 +12,13 @@
       "projectName": "lc-ftb-hook",
       "mainClass": "net.neoforged.devlaunch.Main",
       "args": [
-        "@C:\\Users\\malik\\Programming\\06_Minecraft\\lc-ftb-hook\\build\\moddev\\clientRunProgramArgs.txt"
+        "@C:\\Users\\malik\\curseforge\\minecraft\\Instances\\Teachings of Zeta (2)\\mod_dev\\lc-ftb-hook\\build\\moddev\\clientRunProgramArgs.txt"
       ],
       "vmArgs": [
-        "@C:\\Users\\malik\\Programming\\06_Minecraft\\lc-ftb-hook\\build\\moddev\\clientRunVmArgs.txt",
-        "-Dfml.modFolders\u003dlc_ftb_hook%%C:\\Users\\malik\\Programming\\06_Minecraft\\lc-ftb-hook\\bin\\main"
+        "@C:\\Users\\malik\\curseforge\\minecraft\\Instances\\Teachings of Zeta (2)\\mod_dev\\lc-ftb-hook\\build\\moddev\\clientRunVmArgs.txt",
+        "-Dfml.modFolders\u003dlc_ftb_hook%%C:\\Users\\malik\\curseforge\\minecraft\\Instances\\Teachings of Zeta (2)\\mod_dev\\lc-ftb-hook\\bin\\main"
       ],
-      "cwd": "${workspaceFolder}\\run",
+      "cwd": "${workspaceFolder}\\run-client1",
       "env": {},
       "console": "internalConsole",
       "shortenCommandLine": "none"
@@ -34,11 +34,11 @@
       "projectName": "lc-ftb-hook",
       "mainClass": "net.neoforged.devlaunch.Main",
       "args": [
-        "@C:\\Users\\malik\\Programming\\06_Minecraft\\lc-ftb-hook\\build\\moddev\\client2RunProgramArgs.txt"
+        "@C:\\Users\\malik\\curseforge\\minecraft\\Instances\\Teachings of Zeta (2)\\mod_dev\\lc-ftb-hook\\build\\moddev\\client2RunProgramArgs.txt"
       ],
       "vmArgs": [
-        "@C:\\Users\\malik\\Programming\\06_Minecraft\\lc-ftb-hook\\build\\moddev\\client2RunVmArgs.txt",
-        "-Dfml.modFolders\u003dlc_ftb_hook%%C:\\Users\\malik\\Programming\\06_Minecraft\\lc-ftb-hook\\bin\\main"
+        "@C:\\Users\\malik\\curseforge\\minecraft\\Instances\\Teachings of Zeta (2)\\mod_dev\\lc-ftb-hook\\build\\moddev\\client2RunVmArgs.txt",
+        "-Dfml.modFolders\u003dlc_ftb_hook%%C:\\Users\\malik\\curseforge\\minecraft\\Instances\\Teachings of Zeta (2)\\mod_dev\\lc-ftb-hook\\bin\\main"
       ],
       "cwd": "${workspaceFolder}\\run-client2",
       "env": {},
@@ -56,11 +56,11 @@
       "projectName": "lc-ftb-hook",
       "mainClass": "net.neoforged.devlaunch.Main",
       "args": [
-        "@C:\\Users\\malik\\Programming\\06_Minecraft\\lc-ftb-hook\\build\\moddev\\serverRunProgramArgs.txt"
+        "@C:\\Users\\malik\\curseforge\\minecraft\\Instances\\Teachings of Zeta (2)\\mod_dev\\lc-ftb-hook\\build\\moddev\\serverRunProgramArgs.txt"
       ],
       "vmArgs": [
-        "@C:\\Users\\malik\\Programming\\06_Minecraft\\lc-ftb-hook\\build\\moddev\\serverRunVmArgs.txt",
-        "-Dfml.modFolders\u003dlc_ftb_hook%%C:\\Users\\malik\\Programming\\06_Minecraft\\lc-ftb-hook\\bin\\main"
+        "@C:\\Users\\malik\\curseforge\\minecraft\\Instances\\Teachings of Zeta (2)\\mod_dev\\lc-ftb-hook\\build\\moddev\\serverRunVmArgs.txt",
+        "-Dfml.modFolders\u003dlc_ftb_hook%%C:\\Users\\malik\\curseforge\\minecraft\\Instances\\Teachings of Zeta (2)\\mod_dev\\lc-ftb-hook\\bin\\main"
       ],
       "cwd": "${workspaceFolder}\\run",
       "env": {},

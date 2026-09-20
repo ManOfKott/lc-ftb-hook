@@ -109,7 +109,7 @@ public final class WarService {
     }
 
     public static WarCostBreakdown calculateWarCosts(MinecraftServer server, Team team, TeamPendingState pendingState) {
-        return calculateWarCosts(server, team, pendingState, ProtectionRollbackService.pricingProperties(team, pendingState));
+        return calculateWarCosts(server, team, pendingState, ProtectionRollbackService.pricingProperties(server, team, pendingState));
     }
 
     public static WarCostBreakdown calculateWarCosts(
@@ -167,9 +167,10 @@ public final class WarService {
             Team team,
             TeamPendingState pendingState,
             IBankAccount account,
-            dev.ftb.mods.ftbteams.api.property.TeamProperty<?> property
+            UUID regionId,
+            dev.malik.lcftbhook.data.ProtectionProperty property
     ) {
-        java.util.Map<String, String> pricing = ProtectionRollbackService.pricingWithAppliedPending(team, pendingState, property);
+        java.util.Map<String, String> pricing = ProtectionRollbackService.pricingWithAppliedPending(server, team, pendingState, regionId, property);
         long cost = calculateTotalUpkeepCostCopper(server, team, pendingState, pricing);
         if (cost <= 0L) {
             return true;
@@ -281,6 +282,7 @@ public final class WarService {
             }
             seen.add(declarer.getTeamId());
             views.add(opponentView(
+                    server,
                     declarer,
                     baseUpkeepCopper(server, declarer),
                     selfBase,
@@ -303,6 +305,7 @@ public final class WarService {
             }
             seen.add(declarerId);
             views.add(opponentView(
+                    server,
                     declarer,
                     baseUpkeepCopper(server, declarer),
                     selfBase,
@@ -362,6 +365,7 @@ public final class WarService {
                 continue;
             }
             views.add(opponentView(
+                    server,
                     declarer,
                     baseUpkeepCopper(server, declarer),
                     WarUpkeepMath.ordinalWarTermCopper(selfBase, index++, exponent),
@@ -397,6 +401,7 @@ public final class WarService {
                     : WarEntryStatus.ACTIVE;
             long targetBase = baseUpkeepCopper(server, target);
             views.add(opponentView(
+                    server,
                     target,
                     targetBase,
                     WarUpkeepMath.outgoingWarCostCopper(targetBase),
@@ -429,6 +434,7 @@ public final class WarService {
                     : WarEntryStatus.ACTIVE;
             long targetBase = baseUpkeepCopper(server, target);
             views.add(opponentView(
+                    server,
                     target,
                     targetBase,
                     WarUpkeepMath.outgoingWarCostCopper(targetBase),
@@ -445,6 +451,7 @@ public final class WarService {
                 continue;
             }
             views.add(opponentView(
+                    server,
                     target,
                     baseUpkeepCopper(server, target),
                     costToDeclareWar(server, self, target),
@@ -475,6 +482,7 @@ public final class WarService {
                     ? WarEntryStatus.PENDING_DECLARE
                     : WarEntryStatus.ACTIVE;
             views.add(opponentView(
+                    server,
                     team,
                     baseUpkeepCopper(server, team),
                     costToDeclareWar(server, self, team),
@@ -553,10 +561,6 @@ public final class WarService {
         return Component.translatable("message.lc_ftb_hook.war_declare_pending", displayName(target));
     }
 
-    public static void onTeamRemoved(MinecraftServer server, UUID teamId) {
-        FtbTeamCatalog.onTeamDeleted(server, teamId);
-    }
-
     /**
      * Removes all wars declared by or against the given team and refreshes
      * war/upkeep state for every team that was involved.
@@ -590,13 +594,14 @@ public final class WarService {
     }
 
     private static WarTeamView opponentView(
+            MinecraftServer server,
             Team opponent,
             long targetBaseUpkeepCopper,
             long warCostCopper,
             WarEntryStatus status,
             boolean opponentPendingDeclareOnViewer
     ) {
-        WarTargetProtections protections = WarTargetProtections.live(opponent);
+        WarTargetProtections protections = WarTargetProtections.live(server, opponent);
         return new WarTeamView(
                 opponent.getTeamId(),
                 displayName(opponent),

@@ -55,7 +55,8 @@ public final class UpkeepDetailsCommand {
             return 0;
         }
 
-        player.displayClientMessage(UpkeepMessageBuilder.buildDetails(breakdown), false);
+        int minutesUntilNextUpkeep = dev.malik.lcftbhook.service.UpkeepService.minutesUntilNextUpkeep(player.server);
+        player.displayClientMessage(UpkeepMessageBuilder.buildDetails(breakdown, minutesUntilNextUpkeep), false);
         return 1;
     }
 }

@@ -1,12 +1,15 @@
 package dev.malik.lcftbhook.service;
 
-import dev.ftb.mods.ftbchunks.api.FTBChunksProperties;
 import dev.ftb.mods.ftbteams.api.Team;
-import dev.ftb.mods.ftbteams.api.property.PrivacyMode;
+import dev.malik.lcftbhook.data.FtbHookSavedData;
+import dev.malik.lcftbhook.data.ProtectionProperty;
+import dev.malik.lcftbhook.data.Region;
+import net.minecraft.server.MinecraftServer;
 
 /**
- * Live build-chunk protections on a war opponent. A team is vulnerable when
- * block edit is public, explosions are allowed, or PvP is allowed.
+ * Live protections on a war opponent, aggregated across every one of their
+ * regions. A team is vulnerable in a given aspect the moment ANY of its
+ * regions is unprotected there (even if others are protected).
  */
 public record WarTargetProtections(
         boolean blockEditProtected,
@@ -17,15 +20,22 @@ public record WarTargetProtections(
         return !blockEditProtected || !explosionProtected || !pvpProtected;
     }
 
-    public static WarTargetProtections live(Team team) {
-        return new WarTargetProtections(
-                team.getProperty(FTBChunksProperties.BLOCK_EDIT_MODE) != PrivacyMode.PUBLIC,
-                !team.getProperty(FTBChunksProperties.ALLOW_EXPLOSIONS),
-                !team.getProperty(FTBChunksProperties.ALLOW_PVP)
-        );
-    }
-
-    public static WarTargetProtections allProtected() {
-        return new WarTargetProtections(true, true, true);
+    public static WarTargetProtections live(MinecraftServer server, Team team) {
+        FtbHookSavedData savedData = FtbHookSavedData.get(server);
+        boolean blockEditProtected = true;
+        boolean explosionProtected = true;
+        boolean pvpProtected = true;
+        for (Region region : savedData.getRegions(team.getTeamId()).values()) {
+            if (region.isAtMinimum(ProtectionProperty.BLOCK_EDIT_MODE)) {
+                blockEditProtected = false;
+            }
+            if (region.isAtMinimum(ProtectionProperty.ALLOW_EXPLOSIONS)) {
+                explosionProtected = false;
+            }
+            if (region.isAtMinimum(ProtectionProperty.ALLOW_PVP)) {
+                pvpProtected = false;
+            }
+        }
+        return new WarTargetProtections(blockEditProtected, explosionProtected, pvpProtected);
     }
 }

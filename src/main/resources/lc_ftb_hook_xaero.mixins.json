@@ -1,0 +1,14 @@
+{
+  "required": false,
+  "package": "dev.malik.lcftbhook.mixin.client.xaero",
+  "compatibilityLevel": "JAVA_21",
+  "client": [
+    "ClaimsHighlighterTooltipMixin",
+    "GuiMapMarketplaceMixin",
+    "GuiMapClaimInfoPanelMixin",
+    "WorldMapSessionHighlighterMixin"
+  ],
+  "injectors": {
+    "defaultRequire": 0
+  }
+}

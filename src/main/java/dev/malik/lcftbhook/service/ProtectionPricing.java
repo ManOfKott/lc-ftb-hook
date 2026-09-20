@@ -1,66 +1,53 @@
 package dev.malik.lcftbhook.service;
 
-import dev.ftb.mods.ftbchunks.api.FTBChunksProperties;
 import dev.ftb.mods.ftbchunks.api.ChunkTeamData;
+import dev.ftb.mods.ftbchunks.api.ClaimedChunk;
 import dev.ftb.mods.ftbchunks.api.FTBChunksAPI;
 import dev.ftb.mods.ftbteams.api.Team;
-import dev.ftb.mods.ftbteams.api.property.PrivacyMode;
-import dev.ftb.mods.ftbteams.api.property.TeamProperty;
-import dev.ftb.mods.ftbteams.api.property.TeamPropertyCollection;
-import dev.malik.lcftbhook.config.LCFtbHookConfig;
 import dev.malik.lcftbhook.data.ChunkPosKey;
 import dev.malik.lcftbhook.data.FtbHookSavedData;
+import dev.malik.lcftbhook.data.ProtectionProperty;
+import dev.malik.lcftbhook.data.Region;
+import dev.malik.lcftbhook.data.RegionPropertyKey;
 import dev.malik.lcftbhook.data.TeamPendingState;
-import dev.malik.lcftbhook.teams.LandProperties;
 import dev.malik.lcftbhook.util.MoneyUtil;
 import io.github.lightman314.lightmanscurrency.api.money.value.MoneyValue;
 import net.minecraft.server.MinecraftServer;
 
-import java.util.HashMap;
-import java.util.LinkedHashSet;
+import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
-import java.util.Set;
+import java.util.UUID;
 
+/**
+ * Region-based protection billing. Every region (including the auto-created
+ * Default) prices its own non-minimum protection properties per chunk it
+ * contains; the team-wide free chunk allowance is consumed against the
+ * highest price-per-chunk region(s) first.
+ */
 public final class ProtectionPricing {
-    public static final Set<TeamProperty<?>> BUILD_PROTECTION_PROPERTIES = Set.of(
-            FTBChunksProperties.ALLOW_MOB_GRIEFING,
-            FTBChunksProperties.ALLOW_EXPLOSIONS,
-            FTBChunksProperties.ALLOW_PVP,
-            FTBChunksProperties.BLOCK_INTERACT_MODE,
-            FTBChunksProperties.BLOCK_EDIT_MODE,
-            FTBChunksProperties.ENTITY_INTERACT_MODE
-    );
-
-    /** All priced protection properties: build settings plus their land counterparts. */
-    public static final Set<TeamProperty<?>> PROTECTION_PROPERTIES = combinedProperties();
-
-    private static Set<TeamProperty<?>> combinedProperties() {
-        Set<TeamProperty<?>> all = new LinkedHashSet<>(BUILD_PROTECTION_PROPERTIES);
-        all.addAll(LandProperties.ALL);
-        return Set.copyOf(all);
-    }
-
     private ProtectionPricing() {
     }
 
-    /**
-     * Billable chunk counts per type. The free chunk allowance is consumed by
-     * build chunks first, any remainder reduces the land chunk count.
-     */
-    public record ChunkCounts(int totalChunks, int buildBillable, int landBillable) {
-        public static final ChunkCounts EMPTY = new ChunkCounts(0, 0, 0);
+    public record RegionChunkCount(UUID regionId, int totalChunks, int billableChunks) {
+    }
+
+    public record ChunkCounts(int totalChunks, Map<UUID, RegionChunkCount> perRegion) {
+        public static final ChunkCounts EMPTY = new ChunkCounts(0, Map.of());
     }
 
     public static ChunkCounts countBillableChunks(MinecraftServer server, Team team) {
+        return countBillableChunks(server, team, new TeamPendingState());
+    }
+
+    public static ChunkCounts countBillableChunks(MinecraftServer server, Team team, TeamPendingState pendingState) {
         if (!FTBChunksAPI.api().isManagerLoaded()) {
             return ChunkCounts.EMPTY;
         }
         ChunkTeamData chunkData = FTBChunksAPI.api().getManager().getOrCreateData(team);
-        return countBillableChunks(server, team, chunkData);
-    }
-
-    public static ChunkCounts countBillableChunks(MinecraftServer server, Team team, ChunkTeamData chunkData) {
-        return countBillableChunks(server, team, chunkData, new TeamPendingState());
+        return countBillableChunks(server, team, chunkData, pendingState);
     }
 
     public static ChunkCounts countBillableChunks(
@@ -69,124 +56,89 @@ public final class ProtectionPricing {
             ChunkTeamData chunkData,
             TeamPendingState pendingState
     ) {
-        int total = chunkData.getClaimedChunks().size();
-        int land = countEffectiveLandChunks(server, team, chunkData, pendingState);
-        int build = Math.max(0, total - land);
+        FtbHookSavedData savedData = FtbHookSavedData.get(server);
+        UUID teamId = team.getTeamId();
 
-        int allowance = FreeChunkAllowance.allowance();
-        int buildBillable = Math.max(0, build - allowance);
-        int allowanceLeft = Math.max(0, allowance - build);
-        int landBillable = Math.max(0, land - allowanceLeft);
-        return new ChunkCounts(total, buildBillable, landBillable);
+        Map<UUID, Integer> raw = new LinkedHashMap<>();
+        int total = 0;
+        for (ClaimedChunk chunk : chunkData.getClaimedChunks()) {
+            total++;
+            String key = ChunkPosKey.encode(chunk.getPos());
+            UUID regionId = effectiveRegion(savedData, teamId, key, pendingState);
+            raw.merge(regionId, 1, Integer::sum);
+        }
+
+        List<UUID> byPriceDesc = new ArrayList<>(raw.keySet());
+        byPriceDesc.sort(Comparator.comparingLong((UUID id) ->
+                regionBasePrice(savedData, teamId, id, pendingState)).reversed());
+
+        int remainingAllowance = FreeChunkAllowance.allowance();
+        Map<UUID, RegionChunkCount> perRegion = new LinkedHashMap<>();
+        for (UUID regionId : byPriceDesc) {
+            int count = raw.get(regionId);
+            int consumed = Math.min(remainingAllowance, count);
+            remainingAllowance -= consumed;
+            int billable = count - consumed;
+            perRegion.put(regionId, new RegionChunkCount(regionId, count, billable));
+        }
+        return new ChunkCounts(total, perRegion);
     }
 
-    /**
-     * Land chunk count after queued type changes are applied at the next upkeep.
-     */
-    public static int countEffectiveLandChunks(
-            MinecraftServer server,
-            Team team,
-            ChunkTeamData chunkData,
+    private static UUID effectiveRegion(
+            FtbHookSavedData savedData,
+            UUID teamId,
+            String chunkKey,
             TeamPendingState pendingState
     ) {
-        java.util.Set<String> landKeys = FtbHookSavedData.get(server).getLandChunks(team.getTeamId());
-        int count = 0;
-        for (dev.ftb.mods.ftbchunks.api.ClaimedChunk chunk : chunkData.getClaimedChunks()) {
-            String key = ChunkPosKey.encode(chunk.getPos());
-            boolean land = landKeys.contains(key);
-            if (pendingState.isPendingLandChunk(key)) {
-                land = true;
-            } else if (pendingState.isPendingBuildChunk(key)) {
-                land = false;
-            }
-            if (land) {
-                count++;
-            }
+        if (pendingState.isPendingRegionAssignment(chunkKey)) {
+            return pendingState.pendingRegionAssignmentTarget(chunkKey);
         }
-        return count;
+        return savedData.getChunkRegion(teamId, chunkKey);
     }
 
-    /**
-     * Number of billed land price units: the billable land chunk count is
-     * rounded up to the next full group of {@code landChunkGroupSize} chunks,
-     * then divided by the group size (i.e. one charge per started group).
-     */
-    public static int landChunkUnits(int landBillable) {
-        return landChunkUnits(landBillable, landChunkGroupSize());
-    }
-
-    static int landChunkUnits(int landBillable, int groupSize) {
-        if (landBillable <= 0) {
-            return 0;
-        }
-        groupSize = Math.max(1, groupSize);
-        return (landBillable + groupSize - 1) / groupSize;
-    }
-
-    public static int landChunkGroupSize() {
-        return Math.max(1, LCFtbHookConfig.SERVER.landChunkGroupSize.get());
-    }
-
-    public static long calculateBuildBasePrice(TeamPropertyCollection properties, Map<String, String> pendingProperties) {
+    /** Sum of config prices for every non-minimum property on this region, given a pending-overlay map. */
+    public static long regionBasePrice(Region region, Map<String, String> pendingOverrides) {
         long base = 0L;
-        if (!getBooleanProperty(properties, FTBChunksProperties.ALLOW_MOB_GRIEFING, pendingProperties)) {
-            base += LCFtbHookConfig.SERVER.mobGriefProtectionPrice.get();
-        }
-        if (!getBooleanProperty(properties, FTBChunksProperties.ALLOW_EXPLOSIONS, pendingProperties)) {
-            base += LCFtbHookConfig.SERVER.explosionProtectionPrice.get();
-        }
-        if (!getBooleanProperty(properties, FTBChunksProperties.ALLOW_PVP, pendingProperties)) {
-            base += LCFtbHookConfig.SERVER.pvpDisablePrice.get();
-        }
-        if (getPrivacyProperty(properties, FTBChunksProperties.BLOCK_INTERACT_MODE, pendingProperties) != PrivacyMode.PUBLIC) {
-            base += LCFtbHookConfig.SERVER.blockInteractProtectionPrice.get();
-        }
-        if (getPrivacyProperty(properties, FTBChunksProperties.BLOCK_EDIT_MODE, pendingProperties) != PrivacyMode.PUBLIC) {
-            base += LCFtbHookConfig.SERVER.blockEditProtectionPrice.get();
-        }
-        if (getPrivacyProperty(properties, FTBChunksProperties.ENTITY_INTERACT_MODE, pendingProperties) != PrivacyMode.PUBLIC) {
-            base += LCFtbHookConfig.SERVER.entityInteractProtectionPrice.get();
+        for (ProtectionProperty property : ProtectionProperty.values()) {
+            String key = RegionPropertyKey.encode(region.id(), property.id());
+            String value = pendingOverrides.containsKey(key) ? pendingOverrides.get(key) : region.propertyValue(property);
+            if (!property.isAtMinimum(value)) {
+                base += property.configPrice();
+            }
         }
         return base;
     }
 
-    public static long calculateLandBasePrice(TeamPropertyCollection properties, Map<String, String> pendingProperties) {
-        long base = 0L;
-        // Land chunks can only be protected against block interaction/editing.
-        if (getPrivacyProperty(properties, LandProperties.LAND_BLOCK_INTERACT_MODE, pendingProperties) != PrivacyMode.PUBLIC) {
-            base += LCFtbHookConfig.SERVER.blockInteractProtectionPrice.get();
+    private static long regionBasePrice(FtbHookSavedData savedData, UUID teamId, UUID regionId, TeamPendingState pendingState) {
+        Region region = savedData.getRegion(teamId, regionId);
+        if (region == null) {
+            region = Region.createDefault();
         }
-        if (getPrivacyProperty(properties, LandProperties.LAND_BLOCK_EDIT_MODE, pendingProperties) != PrivacyMode.PUBLIC) {
-            base += LCFtbHookConfig.SERVER.blockEditProtectionPrice.get();
-        }
-        return base;
+        return regionBasePrice(region, pendingState.pendingProperties());
     }
 
-    /**
-     * Protection upkeep in copper: build chunks pay the build base price per
-     * chunk, land chunks (state territory) pay the land base price once per
-     * group of {@code landChunkGroupSize} chunks (rounded up to the next full
-     * group), which makes land cheaper to protect.
-     */
     public static long calculateProtectionCopper(
-            TeamPropertyCollection properties,
-            Map<String, String> pendingProperties,
+            MinecraftServer server,
+            UUID teamId,
+            TeamPendingState pendingState,
             ChunkCounts counts
     ) {
+        FtbHookSavedData savedData = FtbHookSavedData.get(server);
         long copper = 0L;
-        long buildBase = calculateBuildBasePrice(properties, pendingProperties);
-        if (buildBase > 0 && counts.buildBillable() > 0) {
-            copper += buildBase * counts.buildBillable();
-        }
-        long landBase = calculateLandBasePrice(properties, pendingProperties);
-        if (landBase > 0 && counts.landBillable() > 0) {
-            copper += landBase * landChunkUnits(counts.landBillable());
+        for (RegionChunkCount rc : counts.perRegion().values()) {
+            if (rc.billableChunks() <= 0) {
+                continue;
+            }
+            long base = regionBasePrice(savedData, teamId, rc.regionId(), pendingState);
+            if (base > 0) {
+                copper += base * rc.billableChunks();
+            }
         }
         return copper;
     }
 
     public static long calculateForceLoadCopper(int forceLoadCount) {
-        long forceLoadPrice = LCFtbHookConfig.SERVER.forceLoadUpkeepPrice.get();
+        long forceLoadPrice = dev.malik.lcftbhook.config.LCFtbHookConfig.SERVER.forceLoadUpkeepPrice.get();
         if (forceLoadPrice > 0 && forceLoadCount > 0) {
             return forceLoadPrice * forceLoadCount;
         }
@@ -201,12 +153,20 @@ public final class ProtectionPricing {
         ChunkTeamData chunkData = FTBChunksAPI.api().getManager().getOrCreateData(team);
         ChunkCounts counts = countBillableChunks(server, team, chunkData, pendingState);
         int forceLoadCount = countEffectiveForceLoads(chunkData, pendingState);
-        long protectionCopper = calculateProtectionCopper(
-                team.getProperties(),
-                ProtectionRollbackService.pricingProperties(team, pendingState),
-                counts
-        );
-        return protectionCopper + calculateForceLoadCopper(forceLoadCount);
+        long protectionCopper = UpkeepGating.shouldChargeProtection(server, team)
+                ? calculateProtectionCopper(
+                        server,
+                        team.getTeamId(),
+                        new TeamPendingState(ProtectionRollbackService.pricingProperties(server, team, pendingState),
+                                pendingState.pendingForceLoads(), pendingState.pendingForceUnloads(),
+                                pendingState.pendingRegionAssignments(), pendingState.pendingWarDeclares(), pendingState.pendingWarEnds()),
+                        counts
+                )
+                : 0L;
+        long forceLoadCopper = UpkeepGating.shouldChargeForceLoad(server, team)
+                ? calculateForceLoadCopper(forceLoadCount)
+                : 0L;
+        return protectionCopper + forceLoadCopper;
     }
 
     public static long calculateTotalUpkeepCopper(
@@ -218,8 +178,16 @@ public final class ProtectionPricing {
         ChunkTeamData chunkData = FTBChunksAPI.api().getManager().getOrCreateData(team);
         ChunkCounts counts = countBillableChunks(server, team, chunkData, pendingState);
         int forceLoadCount = countEffectiveForceLoads(chunkData, pendingState);
-        long protectionCopper = calculateProtectionCopper(team.getProperties(), pricingOverrides, counts);
-        return protectionCopper + calculateForceLoadCopper(forceLoadCount);
+        TeamPendingState overlay = new TeamPendingState(pricingOverrides,
+                pendingState.pendingForceLoads(), pendingState.pendingForceUnloads(),
+                pendingState.pendingRegionAssignments(), pendingState.pendingWarDeclares(), pendingState.pendingWarEnds());
+        long protectionCopper = UpkeepGating.shouldChargeProtection(server, team)
+                ? calculateProtectionCopper(server, team.getTeamId(), overlay, counts)
+                : 0L;
+        long forceLoadCopper = UpkeepGating.shouldChargeForceLoad(server, team)
+                ? calculateForceLoadCopper(forceLoadCount)
+                : 0L;
+        return protectionCopper + forceLoadCopper;
     }
 
     public static int countEffectiveForceLoads(ChunkTeamData chunkData, TeamPendingState pendingState) {
@@ -227,76 +195,5 @@ public final class ProtectionPricing {
         count += pendingState.pendingForceLoads().size();
         count -= pendingState.pendingForceUnloads().size();
         return Math.max(count, 0);
-    }
-
-    public static boolean isProtectionProperty(TeamProperty<?> property) {
-        return PROTECTION_PROPERTIES.contains(property);
-    }
-
-    public static String propertyKey(TeamProperty<?> property) {
-        return property.getId().getPath();
-    }
-
-    @SuppressWarnings("unchecked")
-    public static String serializePropertyValue(TeamProperty<?> property, Object value) {
-        return ((TeamProperty<Object>) property).toString(value);
-    }
-
-    public static <T> T deserializePropertyValue(TeamProperty<T> property, String value, T fallback) {
-        return property.fromString(value).orElse(fallback);
-    }
-
-    public static Map<String, String> withPendingProperty(
-            Map<String, String> pendingProperties,
-            TeamProperty<?> property,
-            Object value
-    ) {
-        Map<String, String> copy = new HashMap<>(pendingProperties);
-        copy.put(propertyKey(property), serializePropertyValue(property, value));
-        return copy;
-    }
-
-    public static void applyMinimumProtections(MinecraftServer server, Team team) {
-        setAndSync(server, team, FTBChunksProperties.ALLOW_MOB_GRIEFING, true);
-        setAndSync(server, team, FTBChunksProperties.ALLOW_EXPLOSIONS, true);
-        setAndSync(server, team, FTBChunksProperties.ALLOW_PVP, true);
-        setAndSync(server, team, FTBChunksProperties.BLOCK_INTERACT_MODE, PrivacyMode.PUBLIC);
-        setAndSync(server, team, FTBChunksProperties.BLOCK_EDIT_MODE, PrivacyMode.PUBLIC);
-        setAndSync(server, team, FTBChunksProperties.ENTITY_INTERACT_MODE, PrivacyMode.PUBLIC);
-        setAndSync(server, team, FTBChunksProperties.CLAIM_VISIBILITY, PrivacyMode.PUBLIC);
-        setAndSync(server, team, LandProperties.LAND_BLOCK_INTERACT_MODE, PrivacyMode.PUBLIC);
-        setAndSync(server, team, LandProperties.LAND_BLOCK_EDIT_MODE, PrivacyMode.PUBLIC);
-    }
-
-    private static <T> void setAndSync(MinecraftServer server, Team team, TeamProperty<T> property, T value) {
-        team.setProperty(property, value);
-        // Protection properties are not shouldSyncToAll, so syncOnePropertyToAll
-        // would do nothing. Push to the team explicitly so member clients see
-        // the enforced minimum protections.
-        team.syncOnePropertyToTeam(property, value);
-    }
-
-    private static boolean getBooleanProperty(
-            TeamPropertyCollection properties,
-            TeamProperty<Boolean> property,
-            Map<String, String> pendingProperties
-    ) {
-        String key = propertyKey(property);
-        if (pendingProperties.containsKey(key)) {
-            return deserializePropertyValue(property, pendingProperties.get(key), properties.get(property));
-        }
-        return properties.get(property);
-    }
-
-    private static PrivacyMode getPrivacyProperty(
-            TeamPropertyCollection properties,
-            TeamProperty<PrivacyMode> property,
-            Map<String, String> pendingProperties
-    ) {
-        String key = propertyKey(property);
-        if (pendingProperties.containsKey(key)) {
-            return deserializePropertyValue(property, pendingProperties.get(key), properties.get(property));
-        }
-        return properties.get(property);
     }
 }

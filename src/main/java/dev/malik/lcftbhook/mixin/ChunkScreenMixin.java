@@ -1,8 +1,9 @@
 package dev.malik.lcftbhook.mixin;
 
+import dev.malik.lcftbhook.network.RequestChunkOwnershipPayload;
 import dev.malik.lcftbhook.network.RequestClaimPricesPayload;
-import dev.malik.lcftbhook.network.RequestLandChunksPayload;
 import dev.malik.lcftbhook.network.RequestPendingStatePayload;
+import dev.malik.lcftbhook.network.RequestRegionsPayload;
 import net.neoforged.neoforge.network.PacketDistributor;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.injection.At;
@@ -16,7 +17,8 @@ public class ChunkScreenMixin {
         if (Boolean.TRUE.equals(callback.getReturnValue())) {
             PacketDistributor.sendToServer(new RequestClaimPricesPayload());
             PacketDistributor.sendToServer(new RequestPendingStatePayload());
-            PacketDistributor.sendToServer(new RequestLandChunksPayload());
+            PacketDistributor.sendToServer(new RequestRegionsPayload());
+            PacketDistributor.sendToServer(new RequestChunkOwnershipPayload());
         }
     }
 }

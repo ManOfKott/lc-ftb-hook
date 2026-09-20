@@ -77,8 +77,6 @@ public class ForceLoadHandler {
         }
 
         savedData.setPendingState(team.getTeamId(), updated);
-        dev.malik.lcftbhook.LCFtbHook.LOGGER.info("[PendingDebug] Team {}: force-load queued for chunk {}",
-                team.getShortName(), chunkKey);
         PendingStateSync.syncTeam(server, team);
         notifyForceLoadPending(team);
         return CompoundEventResult.interruptFalse(ClaimResult.success());

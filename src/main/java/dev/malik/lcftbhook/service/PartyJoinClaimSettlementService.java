@@ -62,7 +62,7 @@ public final class PartyJoinClaimSettlementService {
                 return;
             }
 
-            long refundCopper = (long) FreeChunkAllowance.billableChunkCount(claimedBefore) * ClaimSettlementHelper.refundPerChunk();
+            long refundCopper = ClaimSettlementHelper.refundForFullUnclaim(claimedBefore);
             Component refund = MoneyMessageUtil.formatValue(MoneyUtil.fromCopper(refundCopper));
             player.displayClientMessage(
                     Component.translatable("message.lc_ftb_hook.party_join_claim_refund", refund, unclaimed[0]),

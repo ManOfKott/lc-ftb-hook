@@ -15,18 +15,23 @@ public record SyncClaimPricesPayload(
         long claimPrice,
         long forceLoadUpkeepPrice,
         int upkeepPeriodMinutes,
+        int minutesUntilNextUpkeep,
         int freeChunks,
         int claimedChunks,
         boolean balanceSynced,
         boolean balanceEmpty,
         String balanceText,
+        boolean privateBalanceEmpty,
+        String privateBalanceText,
+        boolean hasCountryBalance,
+        boolean countryBalanceEmpty,
+        String countryBalanceText,
         long mobGriefProtectionPrice,
         long explosionProtectionPrice,
         long pvpDisablePrice,
         long blockInteractProtectionPrice,
         long blockEditProtectionPrice,
         long entityInteractProtectionPrice,
-        int landChunkGroupSize,
         boolean warEnabled
 ) implements CustomPacketPayload {
     public static final Type<SyncClaimPricesPayload> TYPE = new Type<>(ResourceLocation.fromNamespaceAndPath(LCFtbHook.MOD_ID, "sync_claim_prices"));
@@ -35,18 +40,23 @@ public record SyncClaimPricesPayload(
                 buffer.writeLong(payload.claimPrice);
                 buffer.writeLong(payload.forceLoadUpkeepPrice);
                 buffer.writeVarInt(payload.upkeepPeriodMinutes);
+                buffer.writeVarInt(payload.minutesUntilNextUpkeep);
                 buffer.writeVarInt(payload.freeChunks);
                 buffer.writeVarInt(payload.claimedChunks);
                 buffer.writeBoolean(payload.balanceSynced);
                 buffer.writeBoolean(payload.balanceEmpty);
                 buffer.writeUtf(payload.balanceText);
+                buffer.writeBoolean(payload.privateBalanceEmpty);
+                buffer.writeUtf(payload.privateBalanceText);
+                buffer.writeBoolean(payload.hasCountryBalance);
+                buffer.writeBoolean(payload.countryBalanceEmpty);
+                buffer.writeUtf(payload.countryBalanceText);
                 buffer.writeLong(payload.mobGriefProtectionPrice);
                 buffer.writeLong(payload.explosionProtectionPrice);
                 buffer.writeLong(payload.pvpDisablePrice);
                 buffer.writeLong(payload.blockInteractProtectionPrice);
                 buffer.writeLong(payload.blockEditProtectionPrice);
                 buffer.writeLong(payload.entityInteractProtectionPrice);
-                buffer.writeVarInt(payload.landChunkGroupSize());
                 buffer.writeBoolean(payload.warEnabled());
             },
             buffer -> new SyncClaimPricesPayload(
@@ -55,6 +65,12 @@ public record SyncClaimPricesPayload(
                     buffer.readVarInt(),
                     buffer.readVarInt(),
                     buffer.readVarInt(),
+                    buffer.readVarInt(),
+                    buffer.readBoolean(),
+                    buffer.readBoolean(),
+                    buffer.readUtf(),
+                    buffer.readBoolean(),
+                    buffer.readUtf(),
                     buffer.readBoolean(),
                     buffer.readBoolean(),
                     buffer.readUtf(),
@@ -64,7 +80,6 @@ public record SyncClaimPricesPayload(
                     buffer.readLong(),
                     buffer.readLong(),
                     buffer.readLong(),
-                    buffer.readVarInt(),
                     buffer.readBoolean()
             )
     );
@@ -80,18 +95,23 @@ public record SyncClaimPricesPayload(
                     payload.claimPrice(),
                     payload.forceLoadUpkeepPrice(),
                     payload.upkeepPeriodMinutes(),
+                    payload.minutesUntilNextUpkeep(),
                     payload.freeChunks(),
                     payload.claimedChunks(),
                     payload.balanceSynced(),
                     payload.balanceEmpty(),
                     payload.balanceText(),
+                    payload.privateBalanceEmpty(),
+                    payload.privateBalanceText(),
+                    payload.hasCountryBalance(),
+                    payload.countryBalanceEmpty(),
+                    payload.countryBalanceText(),
                     payload.mobGriefProtectionPrice(),
                     payload.explosionProtectionPrice(),
                     payload.pvpDisablePrice(),
                     payload.blockInteractProtectionPrice(),
                     payload.blockEditProtectionPrice(),
-                    payload.entityInteractProtectionPrice(),
-                    payload.landChunkGroupSize()
+                    payload.entityInteractProtectionPrice()
             );
             ClientWarState.setWarModuleEnabled(payload.warEnabled());
             PendingStateUiRefresh.refreshOpenScreens();
