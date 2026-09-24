@@ -97,7 +97,7 @@ public final class WarStateSync {
                 toEntries(WarService.buildIncomingViews(server, team)),
                 toEntries(WarService.buildOutgoingViews(server, team)),
                 toEntries(WarService.buildAvailableTargets(server, team)),
-                viewerId != null && WarService.canManageWar(team, viewerId)
+                viewerId != null && WarService.canManageWar(server, team, viewerId)
         );
     }
 

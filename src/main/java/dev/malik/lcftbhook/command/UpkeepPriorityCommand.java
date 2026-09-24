@@ -41,7 +41,7 @@ public final class UpkeepPriorityCommand {
             return 0;
         }
 
-        if (team.isPartyTeam() && !BankAccountHelper.canPurchaseForTeam(team, player.getUUID())) {
+        if (team.isPartyTeam() && !BankAccountHelper.canPurchaseForTeam(player.server, team, player.getUUID())) {
             player.displayClientMessage(
                     Component.translatable("message.lc_ftb_hook.upkeep_priority.denied"),
                     false

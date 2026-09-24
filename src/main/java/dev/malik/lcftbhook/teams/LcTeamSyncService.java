@@ -127,6 +127,12 @@ public final class LcTeamSyncService {
     }
 
     @Nullable
+    public static ITeam getLcTeam(MinecraftServer server, UUID ftbTeamId) {
+        long lcTeamId = getLcTeamId(server, ftbTeamId);
+        return lcTeamId <= 0 ? null : TeamAPI.getApi().GetTeam(false, lcTeamId);
+    }
+
+    @Nullable
     private static io.github.lightman314.lightmanscurrency.common.teams.Team resolveLcTeam(
             FtbHookSavedData.TeamLinkEntry entry,
             Team ftbTeam

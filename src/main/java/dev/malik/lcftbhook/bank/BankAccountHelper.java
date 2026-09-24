@@ -6,6 +6,7 @@ import dev.ftb.mods.ftbteams.api.TeamRank;
 import dev.malik.lcftbhook.teams.LcTeamSyncService;
 import io.github.lightman314.lightmanscurrency.api.money.bank.IBankAccount;
 import io.github.lightman314.lightmanscurrency.api.money.bank.reference.builtin.PlayerBankReference;
+import io.github.lightman314.lightmanscurrency.api.teams.ITeam;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerPlayer;
 
@@ -44,12 +45,31 @@ public final class BankAccountHelper {
         return account;
     }
 
-    public static boolean canPurchaseForTeam(Team team, UUID playerId) {
+    /**
+     * Mirrors whatever the team's own Lightman's Currency bank account access
+     * level is set to (owner-only by default, but the owner can open it up to
+     * admins or all members via LC's own team management screen) - not a
+     * separate, fixed officer-or-better rule of our own.
+     */
+    public static boolean canPurchaseForTeam(MinecraftServer server, Team team, UUID playerId) {
         if (!team.isPartyTeam()) {
             return true;
         }
-        TeamRank rank = team.getRankForPlayer(playerId);
-        return rank.isOfficerOrBetter();
+        LcTeamSyncService.ensureLinked(server, team);
+        ITeam lcTeam = LcTeamSyncService.getLcTeam(server, team.getId());
+        if (lcTeam == null) {
+            // Not linked yet (e.g. LC team creation hasn't happened for this
+            // party) - fall back to the old, safe default until it is.
+            TeamRank rank = team.getRankForPlayer(playerId);
+            return rank.isOfficerOrBetter();
+        }
+        int limit = lcTeam.getBankLimit();
+        if (limit < 1) {
+            return lcTeam.isMember(playerId);
+        } else if (limit < 2) {
+            return lcTeam.isAdmin(playerId);
+        }
+        return lcTeam.isOwner(playerId);
     }
 
     public static void ensurePartyAccountExists(MinecraftServer server, Team team) {

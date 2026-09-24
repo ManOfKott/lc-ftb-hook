@@ -509,8 +509,8 @@ public final class WarService {
         return count;
     }
 
-    public static boolean canManageWar(Team team, UUID playerId) {
-        return BankAccountHelper.canPurchaseForTeam(team, playerId);
+    public static boolean canManageWar(MinecraftServer server, Team team, UUID playerId) {
+        return BankAccountHelper.canPurchaseForTeam(server, team, playerId);
     }
 
     @Nullable
@@ -527,7 +527,7 @@ public final class WarService {
         if (self == null || target == null) {
             return Component.translatable("message.lc_ftb_hook.war_unavailable");
         }
-        if (!canManageWar(self, player.getUUID())) {
+        if (!canManageWar(server, self, player.getUUID())) {
             return Component.translatable("message.lc_ftb_hook.war_denied");
         }
         if (self.getTeamId().equals(target.getTeamId())) {

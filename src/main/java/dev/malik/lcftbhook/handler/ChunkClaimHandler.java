@@ -200,7 +200,7 @@ public class ChunkClaimHandler {
             return CompoundEventResult.pass();
         }
 
-        if (!BankAccountHelper.canPurchaseForTeam(team, player.getUUID())) {
+        if (!BankAccountHelper.canPurchaseForTeam(player.server, team, player.getUUID())) {
             return CompoundEventResult.interruptFalse(ClaimResult.customProblem("message.lc_ftb_hook.claim_rank_denied"));
         }
 

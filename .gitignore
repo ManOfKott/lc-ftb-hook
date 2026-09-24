@@ -26,3 +26,9 @@ Thumbs.db
 
 # Other
 .VSCodeCounter/
+
+# Agent working memory - not project documentation, not for the public repo
+AGENTS.md
+
+# Incremental specification
+specification/

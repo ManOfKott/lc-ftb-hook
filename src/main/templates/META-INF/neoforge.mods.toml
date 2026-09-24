@@ -12,7 +12,7 @@ description='''Connects Lightman's Currency with FTB Chunks and FTB Teams for pa
 [[dependencies.${mod_id}]]
 modId="neoforge"
 type="required"
-versionRange="[${neo_version},)"
+versionRange="[${neo_version_min},)"
 ordering="NONE"
 side="BOTH"
 
@@ -26,7 +26,7 @@ side="BOTH"
 [[dependencies.${mod_id}]]
 modId="ftblibrary"
 type="required"
-versionRange="[${ftb_library_version},)"
+versionRange="[${ftb_library_version_min},)"
 ordering="NONE"
 side="BOTH"
 

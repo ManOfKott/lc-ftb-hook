@@ -35,13 +35,13 @@ public class ForceLoadHandler {
             return CompoundEventResult.pass();
         }
 
-        if (!BankAccountHelper.canPurchaseForTeam(team, player.getUUID())) {
-            return CompoundEventResult.interruptFalse(ClaimResult.customProblem("message.lc_ftb_hook.claim_rank_denied"));
-        }
-
         MinecraftServer server = ServerLifecycleHooks.getCurrentServer();
         if (server == null) {
             return CompoundEventResult.pass();
+        }
+
+        if (!BankAccountHelper.canPurchaseForTeam(server, team, player.getUUID())) {
+            return CompoundEventResult.interruptFalse(ClaimResult.customProblem("message.lc_ftb_hook.claim_rank_denied"));
         }
 
         FtbHookSavedData savedData = FtbHookSavedData.get(server);
@@ -93,13 +93,13 @@ public class ForceLoadHandler {
             return CompoundEventResult.pass();
         }
 
-        if (!BankAccountHelper.canPurchaseForTeam(team, player.getUUID())) {
-            return CompoundEventResult.interruptFalse(ClaimResult.customProblem("message.lc_ftb_hook.claim_rank_denied"));
-        }
-
         MinecraftServer server = ServerLifecycleHooks.getCurrentServer();
         if (server == null) {
             return CompoundEventResult.pass();
+        }
+
+        if (!BankAccountHelper.canPurchaseForTeam(server, team, player.getUUID())) {
+            return CompoundEventResult.interruptFalse(ClaimResult.customProblem("message.lc_ftb_hook.claim_rank_denied"));
         }
 
         FtbHookSavedData savedData = FtbHookSavedData.get(server);

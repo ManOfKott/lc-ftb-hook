@@ -8,7 +8,11 @@ $ErrorActionPreference = "Stop"
 function Write-Utf8NoBomFile {
     param(
         [Parameter(Mandatory = $true)][string]$Path,
-        [Parameter(Mandatory = $true)][string[]]$Lines
+        # Not Mandatory: PowerShell's mandatory-parameter check rejects an
+        # empty string *per array element*, not just a wholly-empty argument -
+        # any blank line (normal in a sectioned .toml/.properties file) would
+        # make it throw "cannot bind ... because it is an empty string".
+        [AllowEmptyCollection()][string[]]$Lines
     )
     $utf8NoBom = New-Object System.Text.UTF8Encoding $false
     [System.IO.File]::WriteAllLines($Path, $Lines, $utf8NoBom)

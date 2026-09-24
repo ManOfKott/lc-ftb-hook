@@ -2,6 +2,14 @@
 
 All notable changes to LC FTB Hook are documented in this file.
 
+## [3.1.0]
+
+### Fixes
+- Fixed team-account spending permissions (buying/reselling marketplace chunks, force-loading chunks, placing tax collectors, declaring/ending wars, and the `upkeep_details`/`upkeep_priority` commands) being hardcoded to "Officer or better" regardless of the team's own settings. It now follows whatever access level the team owner has actually configured on the linked Lightman's Currency bank account (Owner only / Owner + Admins / everyone) - set a chunk-selling team to "Member" access and members can spend from it, exactly as configured.
+
+### Dependencies
+- Now built against NeoForge 21.1.251 and FTB Library 2101.1.36. The mod's own minimum required versions are unchanged (NeoForge 21.1.250, FTB Library 2101.1.35), so existing servers aren't forced to update immediately.
+
 ## [3.0.0]
 
 ### Regions (replaces the old Land/Build chunk split)

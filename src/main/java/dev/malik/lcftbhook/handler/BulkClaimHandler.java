@@ -53,7 +53,7 @@ public final class BulkClaimHandler {
             return false;
         }
 
-        if (!BankAccountHelper.canPurchaseForTeam(team, player.getUUID())) {
+        if (!BankAccountHelper.canPurchaseForTeam(player.server, team, player.getUUID())) {
             return false;
         }
 

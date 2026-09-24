@@ -1,5 +1,5 @@
 {
-  "required": false,
+  "required": ${xaero_mixin_required},
   "package": "dev.malik.lcftbhook.mixin.client.xaero",
   "compatibilityLevel": "JAVA_21",
   "client": [
@@ -9,6 +9,6 @@
     "WorldMapSessionHighlighterMixin"
   ],
   "injectors": {
-    "defaultRequire": 0
+    "defaultRequire": ${xaero_mixin_default_require}
   }
 }

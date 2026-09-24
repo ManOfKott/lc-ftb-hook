@@ -57,7 +57,7 @@ public class TaxCollectorPlacementHandler {
             return;
         }
 
-        if (!BankAccountHelper.canPurchaseForTeam(chunkTeam, player.getUUID())) {
+        if (!BankAccountHelper.canPurchaseForTeam(player.server, chunkTeam, player.getUUID())) {
             event.setCanceled(true);
             player.displayClientMessage(Component.translatable("message.lc_ftb_hook.tax_collector_denied"), true);
         }
