@@ -5,6 +5,8 @@ import dev.malik.lcftbhook.config.LCFtbHookConfig;
 import dev.malik.lcftbhook.command.ClearWarsCommand;
 import dev.malik.lcftbhook.command.ForceUpkeepCommand;
 import dev.malik.lcftbhook.command.SeedTestTeamsCommand;
+import dev.malik.lcftbhook.command.RuntimeConfigCommand;
+import dev.malik.lcftbhook.command.ServerAccountCommand;
 import dev.malik.lcftbhook.command.UpkeepDetailsCommand;
 import dev.malik.lcftbhook.command.UpkeepPriorityCommand;
 import dev.malik.lcftbhook.handler.ChunkClaimHandler;
@@ -67,6 +69,8 @@ public class LCFtbHook {
         NeoForge.EVENT_BUS.addListener(ClearWarsCommand::register);
         NeoForge.EVENT_BUS.addListener(SeedTestTeamsCommand::register);
         NeoForge.EVENT_BUS.addListener(ForceUpkeepCommand::register);
+        NeoForge.EVENT_BUS.addListener(ServerAccountCommand::register);
+        NeoForge.EVENT_BUS.addListener(RuntimeConfigCommand::register);
 
         ClaimVisibilityService.register();
 

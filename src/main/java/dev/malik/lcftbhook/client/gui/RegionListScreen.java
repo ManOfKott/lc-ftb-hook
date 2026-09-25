@@ -3,7 +3,6 @@ package dev.malik.lcftbhook.client.gui;
 import dev.ftb.mods.ftblibrary.icon.Color4I;
 import dev.ftb.mods.ftblibrary.icon.Icon;
 import dev.ftb.mods.ftblibrary.icon.Icons;
-import dev.ftb.mods.ftblibrary.icon.ItemIcon;
 import dev.ftb.mods.ftblibrary.ui.BaseScreen;
 import dev.ftb.mods.ftblibrary.ui.NordButton;
 import dev.ftb.mods.ftblibrary.ui.Panel;
@@ -23,7 +22,6 @@ import dev.malik.lcftbhook.network.RequestRegionsPayload;
 import net.minecraft.ChatFormatting;
 import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.network.chat.Component;
-import net.minecraft.world.item.Items;
 import net.neoforged.neoforge.network.PacketDistributor;
 
 import javax.annotation.Nullable;
@@ -34,12 +32,15 @@ import java.util.Map;
 import java.util.UUID;
 
 /**
- * Lists a team's Regions in dismantle-priority order (top = dismantled
- * first). Rows can be dragged by their grip to reorder; clicking a row opens
- * its {@link RegionSettingsScreen}.
+ * Lists a team's Regions in dismantle-priority order, displayed top-to-bottom
+ * as dismantled-last-to-first (see {@link RegionListPanel#visualOrder()}) -
+ * the region you most want to keep protected sits at the top. The
+ * server/network model ({@code regionOrder}) is unaffected by this - it still
+ * stores index 0 = dismantled first. Rows can be dragged by their grip to
+ * reorder; clicking a row opens its {@link RegionSettingsScreen}.
  */
 public class RegionListScreen extends BaseScreen {
-    private static final Icon DELETE_ICON = ItemIcon.getItemIcon(Items.BARRIER);
+    private static final Icon DELETE_ICON = Icons.BIN;
     private static final int HEADER_HEIGHT = 22;
     private static final int HEADER_BUTTON_SIZE = 16;
     private static final int INFO_LINE_HEIGHT = 14;
@@ -48,7 +49,12 @@ public class RegionListScreen extends BaseScreen {
     private static final int ROW_STEP = ROW_HEIGHT + ROW_GAP;
     private static final int SCROLLBAR_WIDTH = 8;
     private static final int CONTENT_PAD = 8;
-    private static final int FOOTER_HEIGHT = 24;
+    // Panel background starts at HEADER_HEIGHT + 2 and ends at height - 4 (see
+    // drawBackground); the info lines and footer row used to sit right on
+    // those edges with only ~2px between them and the border. This adds
+    // actual breathing room top and bottom.
+    private static final int TOP_CONTENT_PAD = 10;
+    private static final int FOOTER_HEIGHT = 30;
 
     private final MyTeamScreen parent;
     private SimpleButton backButton;
@@ -154,7 +160,7 @@ public class RegionListScreen extends BaseScreen {
         backButton.setPosAndSize(5, 5, HEADER_BUTTON_SIZE, HEADER_BUTTON_SIZE);
         infoButton.setPosAndSize(width - 5 - HEADER_BUTTON_SIZE, 5, HEADER_BUTTON_SIZE, HEADER_BUTTON_SIZE);
 
-        int infoY = HEADER_HEIGHT + 4;
+        int infoY = HEADER_HEIGHT + TOP_CONTENT_PAD;
         upkeepHoverArea.setPosAndSize(CONTENT_PAD, infoY, width - CONTENT_PAD * 2, INFO_LINE_HEIGHT);
         forceLoadHoverArea.setPosAndSize(CONTENT_PAD, infoY + INFO_LINE_HEIGHT, width - CONTENT_PAD * 2, INFO_LINE_HEIGHT);
 
@@ -199,7 +205,7 @@ public class RegionListScreen extends BaseScreen {
         );
 
         dev.malik.lcftbhook.service.UpkeepSummaryService.UpkeepSummary summary = dev.malik.lcftbhook.client.ClientUpkeepSummary.get();
-        int infoY = y + HEADER_HEIGHT + 4;
+        int infoY = y + HEADER_HEIGHT + TOP_CONTENT_PAD;
 
         long upkeepCurrent = summary.protectionCurrentCopper() + summary.warIncomingCurrentCopper() + summary.warOutgoingCurrentCopper();
         long upkeepPending = summary.protectionPendingCopper() + summary.warIncomingPendingCopper() + summary.warOutgoingPendingCopper();
@@ -222,11 +228,68 @@ public class RegionListScreen extends BaseScreen {
         theme.drawString(graphics, forceLoadText.copy().withStyle(ChatFormatting.GRAY), x + CONTENT_PAD, infoY + INFO_LINE_HEIGHT, NordColors.SNOW_STORM_1, 0);
     }
 
+    /**
+     * Same level of detail as the full {@code /upkeep_details} command output
+     * (see {@code UpkeepMessageBuilder.appendRegionSection}) - previously this
+     * collapsed every region's protection cost into one opaque "Protection: X"
+     * number, which read as far less transparent than the command version.
+     * All the data needed (each region's own stored property values, billable
+     * chunk count) is already synced client-side via {@link ClientRegions}, so
+     * this needs no new network payload - just the same per-region, per-
+     * property formula breakdown the command already builds, computed here
+     * from the same source data.
+     */
     private void buildUpkeepTooltip(dev.ftb.mods.ftblibrary.util.TooltipList list) {
         dev.malik.lcftbhook.service.UpkeepSummaryService.UpkeepSummary summary = dev.malik.lcftbhook.client.ClientUpkeepSummary.get();
         list.add(Component.translatable("gui.lc_ftb_hook.regions.upkeep_tooltip_title").withStyle(ChatFormatting.BOLD));
 
-        addBreakdownLine(list, "gui.lc_ftb_hook.regions.upkeep_tooltip_protection", summary.protectionCurrentCopper(), summary.protectionPendingCopper());
+        boolean anyRegionLines = false;
+        for (UUID regionId : ClientRegions.regionOrder()) {
+            Region region = ClientRegions.get(regionId);
+            int billableChunks = ClientRegions.billableChunkCount(regionId);
+            if (region == null || billableChunks <= 0) {
+                continue;
+            }
+            List<dev.malik.lcftbhook.data.ProtectionProperty> active = new ArrayList<>();
+            long basePrice = 0L;
+            for (dev.malik.lcftbhook.data.ProtectionProperty property : dev.malik.lcftbhook.data.ProtectionProperty.values()) {
+                if (!region.isAtMinimum(property)) {
+                    active.add(property);
+                    Long price = dev.malik.lcftbhook.client.ClientClaimPrices.protectionPrice(property.id());
+                    basePrice += price != null ? price : 0L;
+                }
+            }
+            if (active.isEmpty()) {
+                continue;
+            }
+            anyRegionLines = true;
+            list.add(Component.literal(region.name()).withStyle(ChatFormatting.YELLOW, ChatFormatting.BOLD));
+            for (dev.malik.lcftbhook.data.ProtectionProperty property : active) {
+                Long price = dev.malik.lcftbhook.client.ClientClaimPrices.protectionPrice(property.id());
+                Component priceText = price != null && price > 0
+                        ? dev.malik.lcftbhook.util.MoneyUtil.fromCopper(price).getText()
+                        : Component.translatable("gui.lc_ftb_hook.price_free");
+                net.minecraft.network.chat.MutableComponent line = Component.literal("  • ").withStyle(ChatFormatting.DARK_GRAY);
+                line.append(Component.translatable("message.lc_ftb_hook.upkeep_priority.protection." + property.id()).withStyle(ChatFormatting.YELLOW));
+                line.append(Component.literal(" +").withStyle(ChatFormatting.GRAY));
+                line.append(priceText.copy().withStyle(ChatFormatting.GOLD));
+                line.append(Component.translatable("gui.lc_ftb_hook.protection_price_per_chunk_suffix").withStyle(ChatFormatting.GOLD));
+                list.add(line);
+            }
+            // basePrice is priced per ProtectionProperty.PRICE_UNIT_CHUNKS
+            // chunks, not per single chunk - see ProtectionPricing.calculateProtectionCopper.
+            long regionCopper = (basePrice * billableChunks) / dev.malik.lcftbhook.data.ProtectionProperty.PRICE_UNIT_CHUNKS;
+            list.add(Component.translatable(
+                    "message.lc_ftb_hook.upkeep_detail.build_formula",
+                    dev.malik.lcftbhook.util.MoneyUtil.fromCopper(basePrice).getText(),
+                    billableChunks,
+                    dev.malik.lcftbhook.util.MoneyUtil.fromCopper(regionCopper).getText()
+            ).withStyle(ChatFormatting.GRAY));
+        }
+        if (!anyRegionLines) {
+            list.add(Component.translatable("gui.lc_ftb_hook.regions.upkeep_tooltip_none").withStyle(ChatFormatting.GRAY));
+        }
+
         if (summary.warIncomingCount() > 0) {
             addBreakdownLine(list, "gui.lc_ftb_hook.regions.upkeep_tooltip_war_incoming", summary.warIncomingCurrentCopper(), summary.warIncomingPendingCopper(), summary.warIncomingCount());
         }
@@ -236,10 +299,10 @@ public class RegionListScreen extends BaseScreen {
 
         long current = summary.protectionCurrentCopper() + summary.warIncomingCurrentCopper() + summary.warOutgoingCurrentCopper();
         long pending = summary.protectionPendingCopper() + summary.warIncomingPendingCopper() + summary.warOutgoingPendingCopper();
-        list.add(totalLine(current, pending).withStyle(ChatFormatting.GOLD));
-        list.add(Component.translatable("gui.lc_ftb_hook.regions.upkeep_tooltip_period", dev.malik.lcftbhook.service.ProtectionPriceDisplay.upkeepPeriodLabel())
-                .withStyle(ChatFormatting.DARK_GRAY));
-        list.add(dev.malik.lcftbhook.service.ProtectionPriceDisplay.nextUpkeepLabel().copy().withStyle(ChatFormatting.DARK_GRAY));
+        list.add(Component.translatable("gui.lc_ftb_hook.regions.upkeep_tooltip_grand_total")
+                .append(": ").append(totalLine(current, pending))
+                .withStyle(ChatFormatting.GOLD));
+        list.add(dev.malik.lcftbhook.service.ProtectionPriceDisplay.nextUpkeepWithPeriodLabel().copy().withStyle(ChatFormatting.DARK_GRAY));
         list.add(Component.translatable("gui.lc_ftb_hook.regions.upkeep_tooltip_not_forceload").withStyle(ChatFormatting.DARK_GRAY));
     }
 
@@ -257,9 +320,7 @@ public class RegionListScreen extends BaseScreen {
             ).withStyle(ChatFormatting.GOLD));
         }
         list.add(totalLine(summary.forceLoadCurrentCopper(), summary.forceLoadPendingCopper()).withStyle(ChatFormatting.GOLD));
-        list.add(Component.translatable("gui.lc_ftb_hook.regions.upkeep_tooltip_period", dev.malik.lcftbhook.service.ProtectionPriceDisplay.upkeepPeriodLabel())
-                .withStyle(ChatFormatting.DARK_GRAY));
-        list.add(dev.malik.lcftbhook.service.ProtectionPriceDisplay.nextUpkeepLabel().copy().withStyle(ChatFormatting.DARK_GRAY));
+        list.add(dev.malik.lcftbhook.service.ProtectionPriceDisplay.nextUpkeepWithPeriodLabel().copy().withStyle(ChatFormatting.DARK_GRAY));
     }
 
     private void addBreakdownLine(dev.ftb.mods.ftblibrary.util.TooltipList list, String labelKey, long current, long pending) {
@@ -309,7 +370,7 @@ public class RegionListScreen extends BaseScreen {
         @Override
         public void alignWidgets() {
             int y = 0;
-            for (UUID id : currentOrder()) {
+            for (UUID id : visualOrder()) {
                 RegionRow row = rowsByRegion.get(id);
                 if (row == null) {
                     continue;
@@ -331,6 +392,21 @@ public class RegionListScreen extends BaseScreen {
 
         List<UUID> currentOrder() {
             return dragOrder != null ? dragOrder : ClientRegions.regionOrder();
+        }
+
+        /**
+         * currentOrder() is dismantle order (index 0 = dismantled first) -
+         * the model/network representation, unchanged. Display reverses it
+         * so the region dismantled LAST (the one you care most about keeping
+         * protected) sits at the TOP of the list, matching how people
+         * actually read priority lists - the original top-to-bottom =
+         * dismantled-first-to-last layout put the most important region at
+         * the bottom, which read backwards.
+         */
+        List<UUID> visualOrder() {
+            List<UUID> order = new ArrayList<>(currentOrder());
+            java.util.Collections.reverse(order);
+            return order;
         }
 
         void beginDrag() {
@@ -471,8 +547,12 @@ public class RegionListScreen extends BaseScreen {
                 if (!dragging) {
                     return false;
                 }
+                // Screen Y is now the reverse of model index (see
+                // RegionListPanel.visualOrder()) - dragging a row DOWN on
+                // screen moves it toward the bottom (dismantled-first end),
+                // which is a DECREASING model index, hence the minus here.
                 int deltaSteps = Math.round((getMouseY() - dragStartMouseY) / (float) ROW_STEP);
-                listPanel.dragTo(region.id(), dragStartIndex + deltaSteps);
+                listPanel.dragTo(region.id(), dragStartIndex - deltaSteps);
                 return true;
             }
 

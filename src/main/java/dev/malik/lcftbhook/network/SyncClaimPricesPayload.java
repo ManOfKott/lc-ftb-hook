@@ -2,6 +2,7 @@ package dev.malik.lcftbhook.network;
 
 import dev.malik.lcftbhook.LCFtbHook;
 import dev.malik.lcftbhook.client.ClientClaimPrices;
+import dev.malik.lcftbhook.client.ClientClaimVisibilityState;
 import dev.malik.lcftbhook.client.ClientWarState;
 import dev.malik.lcftbhook.client.PendingStateUiRefresh;
 import dev.malik.lcftbhook.client.TeamUiRefresh;
@@ -16,6 +17,7 @@ public record SyncClaimPricesPayload(
         long forceLoadUpkeepPrice,
         int upkeepPeriodMinutes,
         int minutesUntilNextUpkeep,
+        int secondsUntilNextUpkeep,
         int freeChunks,
         int claimedChunks,
         boolean balanceSynced,
@@ -32,7 +34,8 @@ public record SyncClaimPricesPayload(
         long blockInteractProtectionPrice,
         long blockEditProtectionPrice,
         long entityInteractProtectionPrice,
-        boolean warEnabled
+        boolean warEnabled,
+        boolean claimVisibilityLocked
 ) implements CustomPacketPayload {
     public static final Type<SyncClaimPricesPayload> TYPE = new Type<>(ResourceLocation.fromNamespaceAndPath(LCFtbHook.MOD_ID, "sync_claim_prices"));
     public static final StreamCodec<FriendlyByteBuf, SyncClaimPricesPayload> STREAM_CODEC = StreamCodec.of(
@@ -41,6 +44,7 @@ public record SyncClaimPricesPayload(
                 buffer.writeLong(payload.forceLoadUpkeepPrice);
                 buffer.writeVarInt(payload.upkeepPeriodMinutes);
                 buffer.writeVarInt(payload.minutesUntilNextUpkeep);
+                buffer.writeVarInt(payload.secondsUntilNextUpkeep);
                 buffer.writeVarInt(payload.freeChunks);
                 buffer.writeVarInt(payload.claimedChunks);
                 buffer.writeBoolean(payload.balanceSynced);
@@ -58,6 +62,7 @@ public record SyncClaimPricesPayload(
                 buffer.writeLong(payload.blockEditProtectionPrice);
                 buffer.writeLong(payload.entityInteractProtectionPrice);
                 buffer.writeBoolean(payload.warEnabled());
+                buffer.writeBoolean(payload.claimVisibilityLocked());
             },
             buffer -> new SyncClaimPricesPayload(
                     buffer.readLong(),
@@ -66,6 +71,7 @@ public record SyncClaimPricesPayload(
                     buffer.readVarInt(),
                     buffer.readVarInt(),
                     buffer.readVarInt(),
+                    buffer.readVarInt(),
                     buffer.readBoolean(),
                     buffer.readBoolean(),
                     buffer.readUtf(),
@@ -80,6 +86,7 @@ public record SyncClaimPricesPayload(
                     buffer.readLong(),
                     buffer.readLong(),
                     buffer.readLong(),
+                    buffer.readBoolean(),
                     buffer.readBoolean()
             )
     );
@@ -96,6 +103,7 @@ public record SyncClaimPricesPayload(
                     payload.forceLoadUpkeepPrice(),
                     payload.upkeepPeriodMinutes(),
                     payload.minutesUntilNextUpkeep(),
+                    payload.secondsUntilNextUpkeep(),
                     payload.freeChunks(),
                     payload.claimedChunks(),
                     payload.balanceSynced(),
@@ -114,6 +122,7 @@ public record SyncClaimPricesPayload(
                     payload.entityInteractProtectionPrice()
             );
             ClientWarState.setWarModuleEnabled(payload.warEnabled());
+            ClientClaimVisibilityState.setLocked(payload.claimVisibilityLocked());
             PendingStateUiRefresh.refreshOpenScreens();
             TeamUiRefresh.refreshMyTeamScreenIfOpen();
         });

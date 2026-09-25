@@ -26,7 +26,10 @@ public record SyncRegionsPayload(
         Map<UUID, Integer> chunkCounts,
         Map<UUID, Integer> billableChunkCounts,
         Map<UUID, Long> currentUpkeepCopper,
-        Map<UUID, Long> pendingUpkeepCopper
+        Map<UUID, Long> pendingUpkeepCopper,
+        Map<UUID, Integer> forceLoadCounts,
+        Map<UUID, Long> forceLoadCurrentUpkeepCopper,
+        Map<UUID, Long> forceLoadPendingUpkeepCopper
 ) implements CustomPacketPayload {
     public static final Type<SyncRegionsPayload> TYPE =
             new Type<>(ResourceLocation.fromNamespaceAndPath(LCFtbHook.MOD_ID, "sync_regions"));
@@ -52,6 +55,9 @@ public record SyncRegionsPayload(
                     buffer.writeVarInt(payload.billableChunkCounts.getOrDefault(region.id(), 0));
                     buffer.writeVarLong(payload.currentUpkeepCopper.getOrDefault(region.id(), 0L));
                     buffer.writeVarLong(payload.pendingUpkeepCopper.getOrDefault(region.id(), 0L));
+                    buffer.writeVarInt(payload.forceLoadCounts.getOrDefault(region.id(), 0));
+                    buffer.writeVarLong(payload.forceLoadCurrentUpkeepCopper.getOrDefault(region.id(), 0L));
+                    buffer.writeVarLong(payload.forceLoadPendingUpkeepCopper.getOrDefault(region.id(), 0L));
                 }
             },
             buffer -> {
@@ -66,6 +72,9 @@ public record SyncRegionsPayload(
                 Map<UUID, Integer> billableChunkCounts = new HashMap<>(regionCount);
                 Map<UUID, Long> currentUpkeep = new HashMap<>(regionCount);
                 Map<UUID, Long> pendingUpkeep = new HashMap<>(regionCount);
+                Map<UUID, Integer> forceLoadCounts = new HashMap<>(regionCount);
+                Map<UUID, Long> forceLoadCurrentUpkeep = new HashMap<>(regionCount);
+                Map<UUID, Long> forceLoadPendingUpkeep = new HashMap<>(regionCount);
                 for (int i = 0; i < regionCount; i++) {
                     UUID id = buffer.readUUID();
                     String name = buffer.readUtf();
@@ -82,8 +91,14 @@ public record SyncRegionsPayload(
                     billableChunkCounts.put(id, buffer.readVarInt());
                     currentUpkeep.put(id, buffer.readVarLong());
                     pendingUpkeep.put(id, buffer.readVarLong());
+                    forceLoadCounts.put(id, buffer.readVarInt());
+                    forceLoadCurrentUpkeep.put(id, buffer.readVarLong());
+                    forceLoadPendingUpkeep.put(id, buffer.readVarLong());
                 }
-                return new SyncRegionsPayload(order, regions, chunkCounts, billableChunkCounts, currentUpkeep, pendingUpkeep);
+                return new SyncRegionsPayload(
+                        order, regions, chunkCounts, billableChunkCounts, currentUpkeep, pendingUpkeep,
+                        forceLoadCounts, forceLoadCurrentUpkeep, forceLoadPendingUpkeep
+                );
             }
     );
 
@@ -94,7 +109,11 @@ public record SyncRegionsPayload(
 
     public static void handleClient(SyncRegionsPayload payload, IPayloadContext context) {
         context.enqueueWork(() -> {
-            ClientRegions.update(payload.regionOrder, payload.regions, payload.chunkCounts, payload.billableChunkCounts, payload.currentUpkeepCopper, payload.pendingUpkeepCopper);
+            ClientRegions.update(
+                    payload.regionOrder, payload.regions, payload.chunkCounts, payload.billableChunkCounts,
+                    payload.currentUpkeepCopper, payload.pendingUpkeepCopper,
+                    payload.forceLoadCounts, payload.forceLoadCurrentUpkeepCopper, payload.forceLoadPendingUpkeepCopper
+            );
             dev.malik.lcftbhook.client.gui.RegionListScreen openScreen =
                     dev.ftb.mods.ftblibrary.util.client.ClientUtils.getCurrentGuiAs(dev.malik.lcftbhook.client.gui.RegionListScreen.class);
             if (openScreen != null) {

@@ -1,4 +1,4 @@
-# Wendet Dev-Server-Einstellungen an: Creative + OP fuer Dev und DevPlayer2
+# Wendet Dev-Server-Einstellungen an: Creative + OP fuer Kestrel92 und WillowDusk (die tatsaechlichen Dev-Client-Usernamen, siehe build.gradle)
 param(
     [string]$RunDir = (Join-Path (Split-Path $PSScriptRoot -Parent) "run")
 )
@@ -61,6 +61,14 @@ if ($needsReset) {
         "online-mode" = "false"
         "enforce-secure-profile" = "false"
         "spawn-protection" = "0"
+        # RCON lets scripts/rcon-stop.py send a real "stop" command instead of
+        # force-killing the java process (via TaskStop) - a forceful kill skips
+        # Minecraft's own save-on-shutdown routine entirely, silently losing
+        # anything since the last autosave tick (the exact "money/force-load
+        # I just did was suddenly gone" symptom). Dev-only, localhost-only,
+        # so a simple fixed password is fine here.
+        "enable-rcon" = "true"
+        "rcon.password" = "devonly"
     }
     $seen = @{}
 
@@ -199,4 +207,4 @@ foreach ($configPath in $modConfigTargets) {
     }
 }
 
-Write-Host "Dev-Server: gamemode=creative, force-gamemode=true, online-mode=false, OP fuer Dev + DevPlayer2, ftbchunks-world.snbt, landChunkGroupSize=5, upkeepPeriodMinutes=2, debugTestTeamCommands=true" -ForegroundColor Cyan
+Write-Host "Dev-Server: gamemode=creative, force-gamemode=true, online-mode=false, OP fuer Kestrel92 + WillowDusk, ftbchunks-world.snbt, landChunkGroupSize=5, upkeepPeriodMinutes=2, debugTestTeamCommands=true" -ForegroundColor Cyan

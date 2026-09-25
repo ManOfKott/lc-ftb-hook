@@ -589,6 +589,84 @@ public final class WarService {
         LCFtbHook.LOGGER.debug("Cleared war state for team {} and refreshed {} partner team(s)", teamId, partners.size());
     }
 
+    /**
+     * Discards every active and pending war for every team that has ANY
+     * SavedData link at all - deliberately NOT scoped to
+     * {@code FtbTeamCatalog.trackedTeams} (which excludes currently-inactive
+     * parties/solo teams still holding a stale outgoing war target - that
+     * filter is meant for upkeep/billing eligibility, not "does this team's
+     * data still exist"). Mirrors {@code ClearWarsCommand}, which is now the
+     * thin command wrapper around this.
+     */
+    public static List<UUID> clearAllWars(MinecraftServer server) {
+        FtbHookSavedData savedData = FtbHookSavedData.get(server);
+        List<UUID> affected = new ArrayList<>();
+
+        for (FtbHookSavedData.TeamLinkEntry entry : savedData.getAllLinks()) {
+            UUID teamId = entry.ftbTeamId();
+            boolean changed = false;
+
+            if (!entry.warTargets().isEmpty()) {
+                savedData.clearWarReferences(teamId);
+                changed = true;
+            }
+
+            TeamPendingState pending = savedData.getPendingState(teamId);
+            if (!pending.pendingWarDeclares().isEmpty() || !pending.pendingWarEnds().isEmpty()) {
+                TeamPendingState cleared = pending.copy().withoutWarReferences(teamId);
+                for (UUID targetId : new HashSet<>(pending.pendingWarDeclares())) {
+                    cleared = cleared.withoutPendingWarDeclare(targetId);
+                }
+                for (UUID targetId : new HashSet<>(pending.pendingWarEnds())) {
+                    cleared = cleared.withoutPendingWarEnd(targetId);
+                }
+                savedData.setPendingState(teamId, cleared);
+                changed = true;
+            }
+
+            if (changed) {
+                affected.add(teamId);
+            }
+        }
+
+        for (UUID teamId : affected) {
+            WarStateSync.syncToTeam(server, teamId);
+            Team team = FtbTeamCatalog.resolve(server, teamId);
+            if (team != null) {
+                WarStateSync.onUpkeepFactorsChanged(server, team);
+            }
+        }
+
+        return affected;
+    }
+
+    /**
+     * Runtime toggle for the whole war system (see {@code RuntimeConfigCommand}'s
+     * {@code warEnabled} entry - the config value itself is already set/saved
+     * by the time this runs). Turning it OFF discards every active and
+     * pending war for every team, not just stops billing them - an inert
+     * "at war" relationship left sitting in storage would resurrect itself
+     * (still billed) the moment the config is flipped back on, which isn't
+     * what "disabled" should mean. Both directions push a fresh
+     * {@code SyncClaimPricesPayload} to every online player so the war
+     * button/menu ({@code ClientWarState.warModuleEnabled}) appears or
+     * disappears immediately, without needing a relog.
+     */
+    public static void setWarSystemEnabled(@Nullable MinecraftServer server, boolean enabled) {
+        if (server == null || !FTBTeamsAPI.api().isManagerLoaded()) {
+            return;
+        }
+
+        if (!enabled) {
+            List<UUID> affected = clearAllWars(server);
+            LCFtbHook.LOGGER.info("War system disabled at runtime - discarded active/pending wars for {} team(s).", affected.size());
+        }
+
+        for (ServerPlayer player : server.getPlayerList().getPlayers()) {
+            ClaimPriceSync.syncToPlayer(player);
+        }
+    }
+
     public static double warMultiplier() {
         return LCFtbHookConfig.SERVER.warCostMultiplier.get();
     }

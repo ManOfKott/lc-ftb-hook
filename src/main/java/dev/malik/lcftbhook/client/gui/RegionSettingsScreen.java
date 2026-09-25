@@ -53,9 +53,11 @@ public class RegionSettingsScreen extends BaseScreen {
     private TextBox renameBox;
     private NordButton renameButton;
     private dev.ftb.mods.ftblibrary.ui.Button upkeepHoverArea;
+    private dev.ftb.mods.ftblibrary.ui.Button forceLoadHoverArea;
     private AllowSellingRow allowSellingRow;
     private BuyerAccessRow buyerAccessRow;
     private PropertyRow[] rows;
+    private ComingSoonRow comingSoonRow;
 
     public RegionSettingsScreen(@Nullable BaseScreen parent, UUID regionId) {
         this.parent = parent;
@@ -124,6 +126,22 @@ public class RegionSettingsScreen extends BaseScreen {
         };
         add(upkeepHoverArea);
 
+        forceLoadHoverArea = new dev.ftb.mods.ftblibrary.ui.Button(this, Component.empty(), Color4I.empty()) {
+            @Override
+            public void onClicked(MouseButton button) {
+            }
+
+            @Override
+            public void draw(GuiGraphics graphics, Theme theme, int x, int y, int w, int h) {
+            }
+
+            @Override
+            public void addMouseOverText(TooltipList list) {
+                buildForceLoadTooltip(list);
+            }
+        };
+        add(forceLoadHoverArea);
+
         allowSellingRow = new AllowSellingRow(this);
         add(allowSellingRow);
 
@@ -135,6 +153,9 @@ public class RegionSettingsScreen extends BaseScreen {
             rows[i] = new PropertyRow(this, ProtectionProperty.DEFAULT_ORDER.get(i));
             add(rows[i]);
         }
+
+        comingSoonRow = new ComingSoonRow(this);
+        add(comingSoonRow);
     }
 
     @Nullable
@@ -171,11 +192,17 @@ public class RegionSettingsScreen extends BaseScreen {
             y += 22;
         }
 
-        // Two info lines now (chunk count + upkeep), both drawn in
-        // drawForeground rather than as widgets - upkeepHoverArea sits over
-        // just the second line so hovering it shows the price breakdown.
+        // Three info lines now (chunk count + protection upkeep + force-load
+        // upkeep), all drawn in drawForeground rather than as widgets -
+        // upkeepHoverArea/forceLoadHoverArea sit over their own line so
+        // hovering each shows its own price breakdown, same split as
+        // RegionListScreen's team-wide summary. A fourth line appears only
+        // while this region has no billable chunks - see the comment on
+        // empty_hint in drawForeground for why that state needs its own
+        // explanation.
         upkeepHoverArea.setPosAndSize(CONTENT_PAD, y + INFO_LINE_HEIGHT, width - CONTENT_PAD * 2, INFO_LINE_HEIGHT);
-        y += INFO_LINE_HEIGHT * 2 + 4;
+        forceLoadHoverArea.setPosAndSize(CONTENT_PAD, y + INFO_LINE_HEIGHT * 2, width - CONTENT_PAD * 2, INFO_LINE_HEIGHT);
+        y += INFO_LINE_HEIGHT * (ClientRegions.billableChunkCount(regionId) == 0 ? 4 : 3) + 4;
 
         allowSellingRow.setPosAndSize(CONTENT_PAD, y, width - CONTENT_PAD * 2, ROW_HEIGHT);
         // setPosAndSize doesn't cascade into a child Panel's own
@@ -194,6 +221,9 @@ public class RegionSettingsScreen extends BaseScreen {
             row.alignWidgets();
             y += ROW_HEIGHT + ROW_GAP;
         }
+
+        comingSoonRow.setPosAndSize(CONTENT_PAD, y, width - CONTENT_PAD * 2, ROW_HEIGHT);
+        y += ROW_HEIGHT + ROW_GAP;
     }
 
     @Override
@@ -223,6 +253,52 @@ public class RegionSettingsScreen extends BaseScreen {
                         MoneyUtil.textOrFree(pendingAmount))
                 : Component.translatable("gui.lc_ftb_hook.regions.upkeep", MoneyUtil.textOrFree(current));
         theme.drawString(graphics, upkeepText.copy().withStyle(ChatFormatting.GOLD), x + CONTENT_PAD, infoY + INFO_LINE_HEIGHT, NordColors.SNOW_STORM_1, 0);
+
+        long forceLoadCurrent = ClientRegions.forceLoadCurrentUpkeepCopper(regionId);
+        long forceLoadPending = ClientRegions.forceLoadPendingUpkeepCopper(regionId);
+        Component forceLoadText = forceLoadPending != forceLoadCurrent
+                ? Component.translatable(
+                        "gui.lc_ftb_hook.regions.force_load_upkeep_pending",
+                        MoneyUtil.textOrFree(forceLoadCurrent),
+                        MoneyUtil.textOrFree(forceLoadPending))
+                : Component.translatable("gui.lc_ftb_hook.regions.force_load_upkeep", MoneyUtil.textOrFree(forceLoadCurrent));
+        theme.drawString(graphics, forceLoadText.copy().withStyle(ChatFormatting.GRAY), x + CONTENT_PAD, infoY + INFO_LINE_HEIGHT * 2, NordColors.SNOW_STORM_1, 0);
+
+        // A region with 0 billable chunks prices every property change as
+        // cost-neutral (0 -> 0), so edits apply immediately with no "Pending"
+        // badge - technically correct (nothing is being billed to change),
+        // but easy to misread as "this setting has already taken full
+        // effect" right before assigning chunks into it, when it's really
+        // waiting on that assignment (itself queued) the same as a normal
+        // pending change would be. Spell that out explicitly here instead.
+        if (ClientRegions.billableChunkCount(regionId) == 0) {
+            Component hint = Component.translatable("gui.lc_ftb_hook.regions.empty_hint")
+                    .withStyle(ChatFormatting.GRAY, ChatFormatting.ITALIC);
+            theme.drawString(graphics, hint, x + CONTENT_PAD, infoY + INFO_LINE_HEIGHT * 3, NordColors.SNOW_STORM_1, 0);
+        }
+    }
+
+    /** Mirrors RegionListScreen's team-wide force-load tooltip, scoped to just this region's own force-loaded chunks. */
+    private void buildForceLoadTooltip(TooltipList list) {
+        list.add(Component.translatable("gui.lc_ftb_hook.regions.force_load_tooltip_title").withStyle(ChatFormatting.BOLD));
+        int current = ClientRegions.forceLoadCount(regionId);
+        list.add(Component.translatable("gui.lc_ftb_hook.regions.force_load_tooltip_line", current).withStyle(ChatFormatting.GRAY));
+
+        long currentCopper = ClientRegions.forceLoadCurrentUpkeepCopper(regionId);
+        long pendingCopper = ClientRegions.forceLoadPendingUpkeepCopper(regionId);
+        if (pendingCopper != currentCopper) {
+            list.add(Component.translatable(
+                    "gui.lc_ftb_hook.regions.upkeep_tooltip_total_pending",
+                    MoneyUtil.textOrFree(currentCopper),
+                    MoneyUtil.textOrFree(pendingCopper)
+            ).withStyle(ChatFormatting.GOLD));
+        } else {
+            list.add(Component.translatable(
+                    "gui.lc_ftb_hook.regions.upkeep_tooltip_total",
+                    MoneyUtil.textOrFree(currentCopper)
+            ).withStyle(ChatFormatting.GOLD));
+        }
+        list.add(ProtectionPriceDisplay.nextUpkeepWithPeriodLabel().copy().withStyle(ChatFormatting.DARK_GRAY));
     }
 
     /**
@@ -258,12 +334,14 @@ public class RegionSettingsScreen extends BaseScreen {
             if (hasPending) {
                 list.add(Component.literal("- ").append(propertyLabel).append(": ")
                         .append(formatValue(liveValue, property)).append(" → ").append(formatValue(pendingValue, property))
-                        .append(Component.literal(" (").append(priceText).append("/chunk)"))
+                        .append(Component.literal(" (").append(priceText)
+                                .append(Component.translatable("gui.lc_ftb_hook.protection_price_per_chunk_suffix")).append(")"))
                         .withStyle(ChatFormatting.GOLD));
             } else {
                 list.add(Component.literal("- ").append(propertyLabel).append(": ")
                         .append(formatValue(liveValue, property))
-                        .append(Component.literal(" (").append(priceText).append("/chunk)"))
+                        .append(Component.literal(" (").append(priceText)
+                                .append(Component.translatable("gui.lc_ftb_hook.protection_price_per_chunk_suffix")).append(")"))
                         .withStyle(ChatFormatting.GRAY));
             }
         }
@@ -292,9 +370,8 @@ public class RegionSettingsScreen extends BaseScreen {
                     MoneyUtil.textOrFree(current)
             ).withStyle(ChatFormatting.GOLD));
         }
-        list.add(Component.translatable("gui.lc_ftb_hook.regions.upkeep_tooltip_period", ProtectionPriceDisplay.upkeepPeriodLabel())
-                .withStyle(ChatFormatting.DARK_GRAY));
-        list.add(ProtectionPriceDisplay.nextUpkeepLabel().copy().withStyle(ChatFormatting.DARK_GRAY));
+        list.add(ProtectionPriceDisplay.nextUpkeepWithPeriodLabel().copy().withStyle(ChatFormatting.DARK_GRAY));
+        list.add(Component.translatable("gui.lc_ftb_hook.regions.upkeep_tooltip_not_forceload").withStyle(ChatFormatting.DARK_GRAY));
     }
 
     /**
@@ -452,14 +529,7 @@ public class RegionSettingsScreen extends BaseScreen {
 
                 @Override
                 public void addMouseOverText(TooltipList list) {
-                    Long price = ClientClaimPrices.protectionPrice(property.id());
-                    if (price != null && price > 0) {
-                        list.add(Component.translatable(
-                                "gui.lc_ftb_hook.protection_price_per_chunk",
-                                ProtectionPriceDisplay.formatPricePerChunk(price),
-                                ProtectionPriceDisplay.upkeepPeriodLabel()
-                        ).withStyle(ChatFormatting.GRAY));
-                    }
+                    dev.malik.lcftbhook.client.ProtectionDescriptionTooltip.append(list, property);
                 }
             };
             add(clickCatcher);
@@ -526,7 +596,14 @@ public class RegionSettingsScreen extends BaseScreen {
             Component priceSuffix = Component.empty();
             Long price = ClientClaimPrices.protectionPrice(property.id());
             if (price != null && price > 0 && protectedPrimary) {
-                priceSuffix = Component.literal(" (+" + MoneyUtil.fromCopper(price).getText().getString() + ")")
+                // Prices are per ProtectionProperty.PRICE_UNIT_CHUNKS chunks,
+                // not per single chunk (see ProtectionDescriptionTooltip's
+                // hover text for the full explanation) - this compact badge
+                // just needs a short hint so the number doesn't read as a
+                // flat per-chunk price.
+                priceSuffix = Component.literal(" (+" + MoneyUtil.fromCopper(price).getText().getString())
+                        .append(Component.translatable("gui.lc_ftb_hook.protection_price_badge_suffix"))
+                        .append(")")
                         .withStyle(ChatFormatting.GOLD);
             }
 
@@ -550,10 +627,45 @@ public class RegionSettingsScreen extends BaseScreen {
     }
 
     private static Component formatValue(String serialized, ProtectionProperty property) {
-        if (property.isPrivacyMode()) {
-            return Component.literal(PrivacyLevel.valueOf(serialized).name());
+        return dev.malik.lcftbhook.client.ProtectionValueFormat.formatValue(serialized, property);
+    }
+
+    /**
+     * Spoiler for a future 7th protection setting (Sable sublevels inside a
+     * protected chunk aren't actually safe from destruction yet - no Sable
+     * integration exists). Deliberately NOT a {@link ProtectionProperty} -
+     * that enum feeds pricing, dismantle order, and persistence, none of
+     * which this should touch since it's inert. Always "false", always
+     * grayed out, not clickable - purely a placeholder row.
+     */
+    private final class ComingSoonRow extends Panel {
+        ComingSoonRow(Panel panel) {
+            super(panel);
         }
-        boolean allowed = "true".equals(serialized);
-        return Component.translatable(allowed ? "gui.lc_ftb_hook.protection_unprotected" : "gui.lc_ftb_hook.protection_protected");
+
+        @Override
+        public void addWidgets() {
+        }
+
+        @Override
+        public void alignWidgets() {
+        }
+
+        @Override
+        public void addMouseOverText(TooltipList list) {
+            list.add(Component.translatable("gui.lc_ftb_hook.protection_coming_soon_tooltip").withStyle(ChatFormatting.GRAY, ChatFormatting.ITALIC));
+        }
+
+        @Override
+        public void drawBackground(GuiGraphics graphics, Theme theme, int x, int y, int w, int h) {
+            NordColors.POLAR_NIGHT_2.withAlpha(180).draw(graphics, x + 1, y, w - 2, h);
+
+            Component label = Component.translatable("gui.lc_ftb_hook.regions.sable_sublevels").withStyle(ChatFormatting.GRAY);
+            theme.drawString(graphics, label, x + 6, y + 3, NordColors.POLAR_NIGHT_4, 0);
+
+            Component value = Component.translatable("gui.lc_ftb_hook.protection_coming_soon").withStyle(ChatFormatting.GRAY, ChatFormatting.ITALIC);
+            int textWidth = theme.getStringWidth(value);
+            theme.drawString(graphics, value, x + w - 6 - textWidth, y + 3, NordColors.POLAR_NIGHT_4, 0);
+        }
     }
 }

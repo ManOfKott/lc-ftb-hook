@@ -21,6 +21,7 @@ import net.minecraft.world.item.Items;
 import net.minecraft.world.level.Level;
 import net.neoforged.neoforge.network.PacketDistributor;
 
+import javax.annotation.Nullable;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
@@ -226,6 +227,11 @@ public final class ChunkContextMenuBuilder {
 
         String chunkKey = claimedKeys.get(0);
         ChunkOwnership ownership = ClientChunkOwnership.get(chunkKey);
+        MapChunk singleChunk = chunkScreen.getDimension()
+                .getRegion(XZ.regionFromChunk(claimed.get(0).x(), claimed.get(0).z()))
+                .getDataBlocking()
+                .getChunk(claimed.get(0));
+        Team owningTeam = singleChunk != null ? singleChunk.getTeam().orElse(null) : null;
 
         boolean chunkUnsettled = ClientUnsettledChunks.isUnsettled(chunkKey);
         if (ownership.isStateOwned() && !ownership.isListed() && !chunkUnsettled) {
@@ -236,7 +242,12 @@ public final class ChunkContextMenuBuilder {
             ));
         }
         if (!ownership.isStateOwned() && ownership.privateOwner().equals(localPlayer)) {
-            if (!ownership.isListed() && !chunkUnsettled && resolveRegion(chunkKey).allowPrivateSelling()) {
+            // owningTeam, not the viewer's own team - a privately-owned chunk
+            // can sit in another team's territory entirely (you bought it off
+            // their marketplace), and resolveRegion needs the LAND's team to
+            // resolve a Default-region fallback correctly.
+            if (!ownership.isListed() && !chunkUnsettled
+                    && resolveRegion(chunkKey, owningTeam != null ? owningTeam.getTeamId() : null).allowPrivateSelling()) {
                 items.add(new ContextMenuItem(
                         Component.translatable("gui.lc_ftb_hook.marketplace.sell"),
                         ItemIcon.getItemIcon(Items.GOLD_INGOT),
@@ -250,11 +261,6 @@ public final class ChunkContextMenuBuilder {
             ));
         }
         if (ownership.isListed()) {
-            MapChunk singleChunk = chunkScreen.getDimension()
-                    .getRegion(XZ.regionFromChunk(claimed.get(0).x(), claimed.get(0).z()))
-                    .getDataBlocking()
-                    .getChunk(claimed.get(0));
-            Team owningTeam = singleChunk != null ? singleChunk.getTeam().orElse(null) : null;
             if (BuyableChunkChecker.isBuyable(ownership, owningTeam, chunkKey, localPlayer)) {
                 items.add(new ContextMenuItem(
                         Component.translatable("gui.lc_ftb_hook.marketplace.buy"),
@@ -279,9 +285,17 @@ public final class ChunkContextMenuBuilder {
         return items;
     }
 
-    private static Region resolveRegion(String chunkKey) {
+    /**
+     * {@code teamId} is the LAND's owning team, not necessarily the viewer's
+     * own - uses the globally-broadcast public region cache (not
+     * {@code ClientRegions}, which only ever holds the viewer's own team's
+     * regions) so this resolves correctly for a privately-owned chunk sitting
+     * in another team's territory too, same as {@link ProtectionInfoLines}.
+     */
+    private static Region resolveRegion(String chunkKey, @Nullable UUID teamId) {
         UUID regionId = ClientRegionMembership.rawRegionOf(chunkKey);
-        Region region = regionId != null ? ClientRegions.get(regionId) : ClientRegions.getDefault();
+        Region region = regionId != null ? ClientPublicRegions.get(regionId)
+                : teamId != null ? ClientPublicRegions.getDefaultFor(teamId) : null;
         return region != null ? region : Region.createDefault();
     }
 

@@ -316,6 +316,7 @@ public final class LcTeamSyncService {
         for (MoneyValue value : legacyAccount.getMoneyStorage().allValues()) {
             if (!value.isEmpty()) {
                 target.depositMoney(value);
+                dev.malik.lcftbhook.bank.BankTransactionLog.logDeposit(target, "Legacy Balance Migration", value);
                 migrated = true;
             }
         }

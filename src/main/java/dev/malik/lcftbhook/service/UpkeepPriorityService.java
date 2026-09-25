@@ -34,6 +34,7 @@ public final class UpkeepPriorityService {
 
     public enum EntryKind {
         PROTECTION,
+        FORCE_LOAD,
         OUTGOING_WAR
     }
 
@@ -61,6 +62,20 @@ public final class UpkeepPriorityService {
             ));
         }
 
+        // Between protections (restored first, dismantled last) and wars
+        // (dismantled first) - matches the actual settlement order in
+        // UpkeepSettlementService.settle.
+        long forceLoadPrice = dev.malik.lcftbhook.config.LCFtbHookConfig.SERVER.forceLoadUpkeepPrice.get();
+        for (String chunkKey : PendingChangeService.forceLoadDismantleOrder(team)) {
+            entries.add(new PriorityEntry(
+                    priority++,
+                    EntryKind.FORCE_LOAD,
+                    chunkKey,
+                    forceLoadLabel(chunkKey),
+                    forceLoadPrice
+            ));
+        }
+
         List<UUID> outgoing = new ArrayList<>(savedData.getWarTargets(teamId));
         outgoing.sort(Comparator.comparingLong(targetId -> {
             Team target = FtbTeamCatalog.resolve(server, targetId);
@@ -76,7 +91,7 @@ public final class UpkeepPriorityService {
                     priority++,
                     EntryKind.OUTGOING_WAR,
                     targetId.toString(),
-                    Component.literal(WarService.displayName(target)),
+                    Component.literal(WarService.displayName(target)).withStyle(net.minecraft.ChatFormatting.YELLOW),
                     WarService.costToDeclareWar(server, team, target)
             ));
         }
@@ -84,11 +99,20 @@ public final class UpkeepPriorityService {
         return entries;
     }
 
+    private static Component forceLoadLabel(String chunkKey) {
+        return Component.translatable(
+                "message.lc_ftb_hook.upkeep_priority.force_load",
+                dev.malik.lcftbhook.data.ChunkPosKey.x(chunkKey),
+                dev.malik.lcftbhook.data.ChunkPosKey.z(chunkKey)
+        ).withStyle(net.minecraft.ChatFormatting.RED);
+    }
+
     private static Component protectionLabel(FtbHookSavedData savedData, UUID teamId, DismantleStep step) {
         Region region = savedData.getRegion(teamId, step.regionId());
         String regionName = region != null ? region.name() : Region.DEFAULT_NAME;
         return Component.translatable("message.lc_ftb_hook.upkeep_priority.protection." + step.property().id())
-                .append(Component.literal(" (" + regionName + ")"));
+                .withStyle(net.minecraft.ChatFormatting.YELLOW)
+                .append(Component.literal(" (" + regionName + ")").withStyle(net.minecraft.ChatFormatting.GRAY));
     }
 
     private static long protectionUpkeepCopper(

@@ -1,4 +1,4 @@
-# Zweiter Dev-Client (eigenes Game-Verzeichnis, Username DevPlayer2)
+# Zweiter Dev-Client (eigenes Game-Verzeichnis, Username WillowDusk)
 $ErrorActionPreference = "Stop"
 Set-Location (Split-Path $PSScriptRoot -Parent)
 
@@ -16,7 +16,7 @@ $env:PATH = "$jdk21\bin;$env:PATH"
 Write-Host "JAVA_HOME=$env:JAVA_HOME" -ForegroundColor Cyan
 java -version
 Write-Host ""
-Write-Host "Starte zweiten Minecraft Dev-Client (DevPlayer2)..." -ForegroundColor Green
+Write-Host "Starte zweiten Minecraft Dev-Client (WillowDusk)..." -ForegroundColor Green
 Write-Host "Server zuerst starten, dann Client 1 (run-client.ps1), dann hier verbinden: Multiplayer -> Direct Connect -> localhost" -ForegroundColor Yellow
 
 & (Join-Path $PSScriptRoot "Apply-DevClientConfig.ps1")

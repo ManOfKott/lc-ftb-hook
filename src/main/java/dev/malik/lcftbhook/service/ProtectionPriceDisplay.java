@@ -35,20 +35,44 @@ public final class ProtectionPriceDisplay {
     }
 
     /**
-     * "In X minutes/hours/days" for the next upkeep settlement pass - server-
-     * only value (there's no single "next due" for a config-side default the
-     * way there is for the period length itself), so on the server this
-     * always reports unknown; only meaningful client-side after a sync.
+     * "In X:YY" (live mm:ss, ticking every frame from a wall-clock-delta
+     * interpolation of the last sync - see {@link ClientClaimPrices#liveSecondsUntilNextUpkeep()})
+     * for the next upkeep settlement pass - server-only value (there's no
+     * single "next due" for a config-side default the way there is for the
+     * period length itself), so on the server this always reports unknown;
+     * only meaningful client-side after a sync.
      */
     public static Component nextUpkeepLabel() {
-        int minutes = FMLEnvironment.dist == Dist.CLIENT ? ClientClaimPrices.minutesUntilNextUpkeep() : -1;
-        if (minutes < 0) {
+        int seconds = FMLEnvironment.dist == Dist.CLIENT ? ClientClaimPrices.liveSecondsUntilNextUpkeep() : -1;
+        if (seconds < 0) {
             return Component.translatable("gui.lc_ftb_hook.regions.upkeep_next_unknown");
         }
-        if (minutes <= 0) {
+        if (seconds == 0) {
             return Component.translatable("gui.lc_ftb_hook.regions.upkeep_next_due_now");
         }
-        return Component.translatable("gui.lc_ftb_hook.regions.upkeep_next_payment", formatUpkeepPeriodLabel(minutes));
+        return Component.translatable("gui.lc_ftb_hook.regions.upkeep_next_payment", formatMmSs(seconds));
+    }
+
+    private static String formatMmSs(int totalSeconds) {
+        int minutes = totalSeconds / 60;
+        int seconds = totalSeconds % 60;
+        return minutes + ":" + (seconds < 10 ? "0" + seconds : String.valueOf(seconds));
+    }
+
+    /**
+     * {@code nextUpkeepLabel()} ("Next payment in X") and
+     * {@code upkeepPeriodLabel()} ("X", meant to follow a "per" label) used
+     * to always get shown as two separate tooltip lines - which, checked
+     * right after a settlement, both say the same "X" and read as pure
+     * duplication. Folds the period into the next-payment line as
+     * parenthetical context instead, matching how {@code UpkeepMessageBuilder}
+     * (the {@code /upkeep_details} command output) already does it.
+     */
+    public static Component nextUpkeepWithPeriodLabel() {
+        return nextUpkeepLabel().copy()
+                .append(" (")
+                .append(Component.translatable("message.lc_ftb_hook.upkeep_detail.every_period", upkeepPeriodLabel()))
+                .append(")");
     }
 
     public static Component formatUpkeepPeriodLabel(int minutes) {

@@ -111,6 +111,20 @@ public abstract class ChunkTeamDataRegionPrivacyMixin {
                 Team team = ((ChunkTeamData) (Object) this).getTeam();
                 base = team != null && team.getRankForPlayer(player.getUUID()).isOfficerOrBetter();
             }
+        } else if (!ownership.isStateOwned() && player.getUUID().equals(ownership.privateOwner())) {
+            // Allies/Team tier on a PRIVATELY-owned chunk: the vanilla FTB
+            // check that produced `base` above only asks "is this player an
+            // ally of / a member of the LAND-owning team" - which says
+            // nothing about whether they're this one chunk's own private
+            // owner. A private owner bought the chunk off some OTHER team's
+            // marketplace, so they're very often neither an ally nor a
+            // member of that team, and were getting locked out of their own
+            // chunk by their own Allies/Team setting. The owner always has
+            // access to their own chunk regardless of which tier is in
+            // effect (matches the PRIVATE tier's owner-bypass above) - these
+            // tiers describe who ELSE gets let in beyond the owner, not a
+            // condition the owner themselves has to separately satisfy.
+            base = true;
         }
 
         PlayerAccessList list = ownership.accessLists().get(regionProperty.id());

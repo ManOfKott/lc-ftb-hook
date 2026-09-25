@@ -40,6 +40,20 @@ public class UpkeepService {
         return (int) Math.ceil(remainingTicks / 20.0 / 60.0);
     }
 
+    /**
+     * Same as {@link #minutesUntilNextUpkeep}, but exact seconds instead of
+     * ceil-rounded minutes - lets the client tick a live mm:ss countdown
+     * between syncs instead of a static, whole-minutes value that only ever
+     * changes when a new sync happens to land.
+     */
+    public static int secondsUntilNextUpkeep(MinecraftServer server) {
+        if (nextUpkeepTick < 0L) {
+            return -1;
+        }
+        long remainingTicks = Math.max(0L, nextUpkeepTick - server.getTickCount());
+        return (int) (remainingTicks / 20L);
+    }
+
     @SubscribeEvent
     public void onServerTick(ServerTickEvent.Post event) {
         MinecraftServer server = event.getServer();
@@ -109,17 +123,18 @@ public class UpkeepService {
 
         if (result.anythingRestored()) {
             ProtectionService.notifyTeam(server, team,
-                    UpkeepMessageBuilder.buildRestorationSummary(result.restoredProtections(), result.restoredWarNames()));
+                    UpkeepMessageBuilder.buildRestorationSummary(server, team.getTeamId(), result.restoredProtections(), result.restoredWarNames()));
         }
 
         if (result.anythingSuspended()) {
             ProtectionService.notifyTeam(server, team,
-                    UpkeepMessageBuilder.buildSuspensionSummary(result.suspendedProtections(), result.warsSuspended()));
+                    UpkeepMessageBuilder.buildSuspensionSummary(server, team.getTeamId(), result.suspendedProtections(), result.suspendedWarNames()));
         }
 
-        if (!result.unaffordableRestorations().isEmpty()) {
+        if (!result.unaffordableRestorations().isEmpty() || !result.unaffordableWarNames().isEmpty()) {
             ProtectionService.notifyTeam(server, team,
-                    UpkeepMessageBuilder.buildUnaffordableRestorationMessage(result.unaffordableRestorations()));
+                    UpkeepMessageBuilder.buildUnaffordableRestorationMessage(
+                            server, team.getTeamId(), result.unaffordableRestorations(), result.unaffordableWarNames()));
         }
 
         UpkeepBreakdown breakdown = UpkeepBreakdown.capture(

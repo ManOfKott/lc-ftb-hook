@@ -35,8 +35,21 @@ public class EditConfigScreenConfigEntryButtonMixin {
     // constructor returns, so locking it at TAIL is equivalent to the old behavior.
     @Inject(method = "<init>", at = @At("TAIL"), remap = false)
     private void lcFtbHook$lockClaimVisibility(CallbackInfo ci) {
-        if (CLAIM_VISIBILITY_KEY.equals(lcFtbHook$normalizePropertyKey(configValue.getPath()))) {
+        if (CLAIM_VISIBILITY_KEY.equals(lcFtbHook$normalizePropertyKey(configValue.getPath())) && lcFtbHook$isLocked()) {
             configValue.setCanEdit(false);
+        }
+    }
+
+    // Reflection, not a direct reference to ClientClaimVisibilityState - see
+    // the class javadoc on why this mixin can't reference other lc_ftb_hook
+    // classes directly. Defaults to true (locked, the original hardcoded
+    // behavior) if anything about that lookup fails.
+    private static boolean lcFtbHook$isLocked() {
+        try {
+            Class<?> cls = Class.forName("dev.malik.lcftbhook.client.ClientClaimVisibilityState");
+            return (boolean) cls.getMethod("isLocked").invoke(null);
+        } catch (Throwable e) {
+            return true;
         }
     }
 

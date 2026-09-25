@@ -112,7 +112,9 @@ public final class PartyDisbandSettlementService {
                 continue;
             }
             teamAccount.withdrawMoney(value);
+            dev.malik.lcftbhook.bank.BankTransactionLog.logWithdraw(teamAccount, "Party Disbanded", value);
             ownerAccount.depositMoney(value);
+            dev.malik.lcftbhook.bank.BankTransactionLog.logDeposit(ownerAccount, "Party Disbanded", value);
         }
     }
 

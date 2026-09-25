@@ -17,6 +17,9 @@ public final class ClaimVisibilityService {
     }
 
     private static void onTeamPropertiesChanged(TeamPropertiesChangedEvent event) {
+        if (!dev.malik.lcftbhook.config.LCFtbHookConfig.SERVER.lockClaimVisibilityPublic.get()) {
+            return;
+        }
         Team team = event.getTeam();
         if (!team.isValid()) {
             return;
@@ -29,6 +32,9 @@ public final class ClaimVisibilityService {
 
     public static void ensurePublic(Team team) {
         if (team == null || !team.isValid()) {
+            return;
+        }
+        if (!dev.malik.lcftbhook.config.LCFtbHookConfig.SERVER.lockClaimVisibilityPublic.get()) {
             return;
         }
         if (team.getProperty(FTBChunksProperties.CLAIM_VISIBILITY) != PrivacyMode.PUBLIC) {

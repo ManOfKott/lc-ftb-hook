@@ -157,6 +157,15 @@ public final class ProtectionRollbackService {
                 ? region.withoutProperty(property.id())
                 : region.withProperty(property.id(), serialized);
         savedData.updateRegion(teamId, updatedRegion);
+        // A no-op for a genuine dismantle-restore (always an INCREASE back
+        // to the pre-suspension value - see RegionService's javadoc on this
+        // method), but a queued deliberate DECREASE finally being committed
+        // here (cost went up, so it couldn't apply immediately - see
+        // RegionService#setRegionProperty) needs the same override sweep the
+        // immediate-apply path already gets.
+        if (RegionService.clearOverridesInvalidatedByRegionChange(savedData, teamId, regionId, property, serialized)) {
+            MarketplaceService.broadcastChunkOwnership(server);
+        }
         return pendingState.withoutPendingProperty(key);
     }
 }

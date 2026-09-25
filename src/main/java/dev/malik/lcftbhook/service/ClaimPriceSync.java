@@ -7,9 +7,9 @@ import dev.malik.lcftbhook.bank.BankAccountHelper;
 import dev.malik.lcftbhook.config.LCFtbHookConfig;
 import dev.malik.lcftbhook.network.SyncClaimPricesPayload;
 import dev.malik.lcftbhook.service.WarService;
+import dev.malik.lcftbhook.util.MoneyUtil;
 import io.github.lightman314.lightmanscurrency.api.money.bank.IBankAccount;
 import io.github.lightman314.lightmanscurrency.api.money.bank.reference.builtin.PlayerBankReference;
-import io.github.lightman314.lightmanscurrency.api.money.coins.CoinAPI;
 import io.github.lightman314.lightmanscurrency.api.money.value.MoneyValue;
 import net.minecraft.server.level.ServerPlayer;
 import net.neoforged.neoforge.network.PacketDistributor;
@@ -39,7 +39,7 @@ public final class ClaimPriceSync {
                 BankAccountHelper.ensurePartyAccountExists(player.server, team);
                 IBankAccount account = BankAccountHelper.getAccountForPlayer(player.server, player);
                 balanceSynced = true;
-                MoneyValue balance = account.getMoneyStorage().valueOf(CoinAPI.MAIN_CHAIN);
+                MoneyValue balance = MoneyUtil.mainChainValue(account);
                 balanceEmpty = balance.isEmpty();
                 if (!balanceEmpty) {
                     balanceText = balance.getText().getString();
@@ -47,7 +47,7 @@ public final class ClaimPriceSync {
 
                 IBankAccount privateAccount = PlayerBankReference.of(player.getUUID()).get();
                 if (privateAccount != null) {
-                    MoneyValue privateBalance = privateAccount.getMoneyStorage().valueOf(CoinAPI.MAIN_CHAIN);
+                    MoneyValue privateBalance = MoneyUtil.mainChainValue(privateAccount);
                     privateBalanceEmpty = privateBalance.isEmpty();
                     if (!privateBalanceEmpty) {
                         privateBalanceText = privateBalance.getText().getString();
@@ -61,7 +61,7 @@ public final class ClaimPriceSync {
                 if (team.isPartyTeam() && team.getRankForPlayer(player.getUUID()).isOfficerOrBetter()) {
                     IBankAccount countryAccount = BankAccountHelper.getAccountForTeam(player.server, team);
                     hasCountryBalance = true;
-                    MoneyValue countryBalance = countryAccount.getMoneyStorage().valueOf(CoinAPI.MAIN_CHAIN);
+                    MoneyValue countryBalance = MoneyUtil.mainChainValue(countryAccount);
                     countryBalanceEmpty = countryBalance.isEmpty();
                     if (!countryBalanceEmpty) {
                         countryBalanceText = countryBalance.getText().getString();
@@ -79,6 +79,7 @@ public final class ClaimPriceSync {
                 LCFtbHookConfig.SERVER.forceLoadUpkeepPrice.get(),
                 LCFtbHookConfig.SERVER.upkeepPeriodMinutes.get(),
                 UpkeepService.minutesUntilNextUpkeep(player.server),
+                UpkeepService.secondsUntilNextUpkeep(player.server),
                 LCFtbHookConfig.SERVER.freeChunks.get(),
                 claimedChunks,
                 balanceSynced,
@@ -95,7 +96,8 @@ public final class ClaimPriceSync {
                 LCFtbHookConfig.SERVER.blockInteractProtectionPrice.get(),
                 LCFtbHookConfig.SERVER.blockEditProtectionPrice.get(),
                 LCFtbHookConfig.SERVER.entityInteractProtectionPrice.get(),
-                WarService.isEnabled()
+                WarService.isEnabled(),
+                LCFtbHookConfig.SERVER.lockClaimVisibilityPublic.get()
         );
     }
 }

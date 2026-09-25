@@ -86,7 +86,9 @@ public record UpkeepBreakdown(
                 continue;
             }
             long basePrice = ProtectionPricing.regionBasePrice(region, java.util.Map.of());
-            long copper = basePrice > 0 ? basePrice * rc.billableChunks() : 0L;
+            // basePrice is priced per ProtectionProperty.PRICE_UNIT_CHUNKS
+            // chunks, not per single chunk - see ProtectionPricing.calculateProtectionCopper.
+            long copper = basePrice > 0 ? (basePrice * rc.billableChunks()) / ProtectionProperty.PRICE_UNIT_CHUNKS : 0L;
             totalProtectionCopper += copper;
             sections.add(new RegionProtectionSection(region.name(), lines, basePrice, rc.billableChunks(), copper));
         }

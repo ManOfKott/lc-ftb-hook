@@ -29,6 +29,8 @@ public final class ClientClaimPrices {
     private static long forceLoadUpkeepPrice = -1L;
     private static int upkeepPeriodMinutes = -1;
     private static int minutesUntilNextUpkeep = -1;
+    private static int secondsUntilNextUpkeepAtSync = -1;
+    private static long secondsUntilNextUpkeepSyncedAtMillis;
     private static int freeChunks;
     private static int claimedChunks;
     private static long mobGriefProtectionPrice = -1L;
@@ -59,6 +61,7 @@ public final class ClientClaimPrices {
             long forceLoadUpkeep,
             int upkeepPeriod,
             int minutesUntilNext,
+            int secondsUntilNext,
             int free,
             int claimed,
             boolean syncedBalance,
@@ -80,6 +83,8 @@ public final class ClientClaimPrices {
         forceLoadUpkeepPrice = forceLoadUpkeep;
         upkeepPeriodMinutes = upkeepPeriod;
         minutesUntilNextUpkeep = minutesUntilNext;
+        secondsUntilNextUpkeepAtSync = secondsUntilNext;
+        secondsUntilNextUpkeepSyncedAtMillis = System.currentTimeMillis();
         freeChunks = free;
         claimedChunks = claimed;
         balanceSynced = syncedBalance;
@@ -105,6 +110,20 @@ public final class ClientClaimPrices {
     /** -1 if not yet synced (server just started, or no sync has landed yet). */
     public static int minutesUntilNextUpkeep() {
         return minutesUntilNextUpkeep;
+    }
+
+    /**
+     * Exact seconds remaining until the next upkeep settlement, interpolated
+     * from wall-clock time elapsed since the last sync landed - lets a
+     * tooltip tick a live mm:ss countdown every frame without needing a
+     * per-second network sync. -1 if not yet synced.
+     */
+    public static int liveSecondsUntilNextUpkeep() {
+        if (secondsUntilNextUpkeepAtSync < 0) {
+            return -1;
+        }
+        long elapsedSeconds = (System.currentTimeMillis() - secondsUntilNextUpkeepSyncedAtMillis) / 1000L;
+        return (int) Math.max(0L, secondsUntilNextUpkeepAtSync - elapsedSeconds);
     }
 
     @Nullable

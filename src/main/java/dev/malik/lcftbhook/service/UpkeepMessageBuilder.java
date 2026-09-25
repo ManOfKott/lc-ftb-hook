@@ -1,6 +1,8 @@
 package dev.malik.lcftbhook.service;
 
 import dev.malik.lcftbhook.LCFtbHook;
+import dev.malik.lcftbhook.data.FtbHookSavedData;
+import dev.malik.lcftbhook.data.Region;
 import dev.malik.lcftbhook.service.ProtectionDismantleOrder.DismantleStep;
 import dev.malik.lcftbhook.util.MoneyMessageUtil;
 import dev.malik.lcftbhook.util.MoneyUtil;
@@ -11,8 +13,10 @@ import net.minecraft.network.chat.Component;
 import net.minecraft.network.chat.HoverEvent;
 import net.minecraft.network.chat.MutableComponent;
 import net.minecraft.network.chat.Style;
+import net.minecraft.server.MinecraftServer;
 
 import java.util.List;
+import java.util.UUID;
 
 public final class UpkeepMessageBuilder {
     private static final String DETAILS_COMMAND = "/" + LCFtbHook.MOD_ID + " upkeep_details";
@@ -20,25 +24,50 @@ public final class UpkeepMessageBuilder {
     private UpkeepMessageBuilder() {
     }
 
-    public static Component buildUnaffordableRestorationMessage(List<DismantleStep> unaffordable) {
-        MutableComponent msg = Component.literal("⌛ ")
-                .withStyle(ChatFormatting.YELLOW)
-                .append(Component.translatable("message.lc_ftb_hook.unaffordable_restoration_header", unaffordable.size())
-                        .withStyle(ChatFormatting.YELLOW, ChatFormatting.BOLD));
-        appendProtectionList(msg, unaffordable, ChatFormatting.YELLOW);
-        msg.append("\n");
-        msg.append(Component.translatable("message.lc_ftb_hook.unaffordable_restoration_hint").withStyle(ChatFormatting.GRAY));
+    public static Component buildUnaffordableRestorationMessage(
+            MinecraftServer server, UUID teamId, List<DismantleStep> unaffordable, List<String> unaffordableWarNames
+    ) {
+        MutableComponent msg = Component.empty();
+        boolean wroteAnything = false;
+
+        if (!unaffordable.isEmpty()) {
+            msg.append(Component.literal("⌛ ")
+                    .withStyle(ChatFormatting.YELLOW)
+                    .append(Component.translatable("message.lc_ftb_hook.unaffordable_restoration_header", unaffordable.size())
+                            .withStyle(ChatFormatting.YELLOW, ChatFormatting.BOLD)));
+            appendProtectionList(server, teamId, msg, unaffordable, ChatFormatting.YELLOW);
+            wroteAnything = true;
+        }
+
+        if (!unaffordableWarNames.isEmpty()) {
+            if (wroteAnything) msg.append("\n");
+            msg.append(Component.literal("⌛ ")
+                    .withStyle(ChatFormatting.YELLOW)
+                    .append(Component.translatable("message.lc_ftb_hook.unaffordable_war_header", unaffordableWarNames.size())
+                            .withStyle(ChatFormatting.YELLOW, ChatFormatting.BOLD)));
+            for (String warName : unaffordableWarNames) {
+                msg.append("\n");
+                msg.append(Component.literal("  • ").withStyle(ChatFormatting.DARK_GRAY));
+                msg.append(Component.translatable("message.lc_ftb_hook.war_suspended", warName).withStyle(ChatFormatting.YELLOW));
+            }
+            wroteAnything = true;
+        }
+
+        if (wroteAnything) {
+            msg.append("\n");
+            msg.append(Component.translatable("message.lc_ftb_hook.unaffordable_restoration_hint").withStyle(ChatFormatting.GRAY));
+        }
         return msg;
     }
 
-    public static Component buildRestorationSummary(List<DismantleStep> restored, List<String> restoredWarNames) {
+    public static Component buildRestorationSummary(MinecraftServer server, UUID teamId, List<DismantleStep> restored, List<String> restoredWarNames) {
         MutableComponent msg = Component.empty();
         boolean wroteAnything = false;
 
         if (!restored.isEmpty()) {
             msg.append(Component.translatable("message.lc_ftb_hook.restoration_header", restored.size())
                     .withStyle(ChatFormatting.GREEN));
-            appendProtectionList(msg, restored, ChatFormatting.WHITE);
+            appendProtectionList(server, teamId, msg, restored, ChatFormatting.WHITE);
             wroteAnything = true;
         }
 
@@ -52,22 +81,26 @@ public final class UpkeepMessageBuilder {
         return msg;
     }
 
-    public static Component buildSuspensionSummary(List<DismantleStep> suspended, boolean warsSuspended) {
+    public static Component buildSuspensionSummary(MinecraftServer server, UUID teamId, List<DismantleStep> suspended, List<String> suspendedWarNames) {
         MutableComponent msg = Component.empty();
         boolean wroteAnything = false;
 
         if (!suspended.isEmpty()) {
             msg.append(Component.translatable("message.lc_ftb_hook.suspension_header", suspended.size())
                     .withStyle(ChatFormatting.YELLOW));
-            appendProtectionList(msg, suspended, ChatFormatting.WHITE);
+            appendProtectionList(server, teamId, msg, suspended, ChatFormatting.WHITE);
             wroteAnything = true;
         }
 
-        if (warsSuspended) {
+        if (!suspendedWarNames.isEmpty()) {
             if (wroteAnything) msg.append("\n");
-            msg.append(Component.translatable(
-                    wroteAnything ? "message.lc_ftb_hook.suspension_wars" : "message.lc_ftb_hook.suspension_wars_header"
-            ).withStyle(ChatFormatting.YELLOW));
+            msg.append(Component.translatable("message.lc_ftb_hook.suspension_wars_header", suspendedWarNames.size())
+                    .withStyle(ChatFormatting.YELLOW));
+            for (String warName : suspendedWarNames) {
+                msg.append("\n");
+                msg.append(Component.literal("  • ").withStyle(ChatFormatting.DARK_GRAY));
+                msg.append(Component.translatable("message.lc_ftb_hook.war_suspended", warName).withStyle(ChatFormatting.WHITE));
+            }
             wroteAnything = true;
         }
 
@@ -79,12 +112,16 @@ public final class UpkeepMessageBuilder {
         return msg;
     }
 
-    private static void appendProtectionList(MutableComponent msg, List<DismantleStep> steps, ChatFormatting color) {
+    private static void appendProtectionList(MinecraftServer server, UUID teamId, MutableComponent msg, List<DismantleStep> steps, ChatFormatting color) {
+        FtbHookSavedData savedData = FtbHookSavedData.get(server);
         for (DismantleStep step : steps) {
             msg.append("\n");
             msg.append(Component.literal("  • ").withStyle(ChatFormatting.DARK_GRAY));
             String labelKey = "message.lc_ftb_hook.upkeep_priority.protection." + step.property().id();
-            msg.append(Component.translatable(labelKey).withStyle(color));
+            Region region = savedData.getRegion(teamId, step.regionId());
+            String regionName = region != null ? region.name() : Region.DEFAULT_NAME;
+            msg.append(Component.translatable(labelKey).withStyle(color)
+                    .copy().append(Component.literal(" (" + regionName + ")").withStyle(ChatFormatting.GRAY)));
         }
     }
 
@@ -106,12 +143,19 @@ public final class UpkeepMessageBuilder {
                 .withStyle(ChatFormatting.GOLD, ChatFormatting.BOLD));
         message.append("\n");
 
-        appendLine(message, "message.lc_ftb_hook.upkeep_detail.period",
-                styled(UpkeepPeriodFormat.format(breakdown.periodMinutes()), ChatFormatting.AQUA));
-        message.append("\n");
-
-        appendLine(message, "message.lc_ftb_hook.upkeep_detail.next_payment",
-                styled(nextPaymentValueText(minutesUntilNextUpkeep), ChatFormatting.AQUA));
+        // Period and next-payment countdown used to be two separate lines,
+        // which read as pure duplication whenever you check right after a
+        // settlement (countdown resets to the full period). They're still
+        // two different numbers in general - just fold the period into the
+        // next-payment line as context instead of giving it its own line.
+        Component nextPaymentValue = styled(nextPaymentValueText(minutesUntilNextUpkeep), ChatFormatting.AQUA).copy()
+                .append(Component.literal(" ("))
+                .append(Component.translatable(
+                        "message.lc_ftb_hook.upkeep_detail.every_period",
+                        styled(UpkeepPeriodFormat.format(breakdown.periodMinutes()), ChatFormatting.AQUA)
+                ))
+                .append(Component.literal(")"));
+        appendLine(message, "message.lc_ftb_hook.upkeep_detail.next_payment", nextPaymentValue);
         message.append("\n");
 
         if (breakdown.chunkCount() > 0) {

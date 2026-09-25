@@ -138,6 +138,7 @@ public class ChunkClaimHandler {
             account = BankAccountHelper.getAccountForTeam(server, team);
         }
         account.depositMoney(refund);
+        dev.malik.lcftbhook.bank.BankTransactionLog.logDeposit(account, "Claim Refund", refund);
 
         ServerPlayer player = source.getPlayer();
         if (player != null) {
@@ -225,7 +226,9 @@ public class ChunkClaimHandler {
             return CompoundEventResult.interruptFalse(new InsufficientFundsClaimResult(message.copy()));
         }
 
-        account.withdrawMoney(price);
+        MoneyValue withdrawn = account.withdrawMoney(price);
+        dev.malik.lcftbhook.bank.BankTransactionLog.logWithdraw(account, "Claim Payment", withdrawn);
+        dev.malik.lcftbhook.bank.ServerAccountDeposit.deposit(withdrawn, dev.malik.lcftbhook.service.WarService.displayName(team) + " (claim)");
         if (ClaimBatchContext.isExecuting()) {
             ClaimBatchContext.recordClaimSpend(priceAmount);
         } else {

@@ -19,6 +19,18 @@ public enum ProtectionProperty {
     BLOCK_EDIT_MODE("block_edit_mode", true, PrivacyLevel.PUBLIC.name(), () -> LCFtbHookConfig.SERVER.blockEditProtectionPrice.get()),
     ENTITY_INTERACT_MODE("entity_interact_mode", true, PrivacyLevel.PUBLIC.name(), () -> LCFtbHookConfig.SERVER.entityInteractProtectionPrice.get());
 
+    /**
+     * All 6 config prices above are denominated per this many billable
+     * chunks, not per single chunk - a config value of {@code V} means
+     * {@code V} copper is owed once {@code PRICE_UNIT_CHUNKS} chunks have
+     * that property active, rounded DOWN (see {@code ProtectionPricing}'s
+     * actual `* chunks / PRICE_UNIT_CHUNKS` formula). This lets a price be
+     * effectively "0.something copper per chunk" (e.g. configPrice=1 means
+     * nothing is charged below 10 chunks, then 1 copper at 10-19 chunks,
+     * 2 copper at 20-29, etc.) without needing fractional money anywhere.
+     */
+    public static final long PRICE_UNIT_CHUNKS = 10L;
+
     /** Default per-region dismantle/restore order (top dismantled first, i.e. first here). */
     public static final List<ProtectionProperty> DEFAULT_ORDER = List.of(
             ENTITY_INTERACT_MODE, BLOCK_EDIT_MODE, BLOCK_INTERACT_MODE,

@@ -131,7 +131,12 @@ public final class ProtectionPricing {
             }
             long base = regionBasePrice(savedData, teamId, rc.regionId(), pendingState);
             if (base > 0) {
-                copper += base * rc.billableChunks();
+                // base is priced per ProtectionProperty.PRICE_UNIT_CHUNKS
+                // chunks, not per single chunk - floor-divide AFTER
+                // multiplying by the actual chunk count, never before (that
+                // would round every sub-unit property to 0 regardless of
+                // chunk count, defeating the point of the smaller unit).
+                copper += (base * rc.billableChunks()) / ProtectionProperty.PRICE_UNIT_CHUNKS;
             }
         }
         return copper;

@@ -42,7 +42,10 @@ public final class RegionService {
 
     public static Region createRegion(MinecraftServer server, Team team, String name) {
         Region region = Region.create(name);
-        // New regions insert at the top of the list (dismantled first) until dragged elsewhere.
+        // New regions insert at regionOrder index 0 (dismantled first) until
+        // dragged elsewhere - RegionListScreen's reversed display puts that
+        // at the visual BOTTOM (least-prioritized), which is the right
+        // default for an unconfigured region.
         FtbHookSavedData.get(server).addRegion(team.getTeamId(), region, true);
         syncRegionsToTeam(server, team);
         return region;
@@ -283,6 +286,52 @@ public final class RegionService {
     }
 
     /**
+     * A region's own property value just moved from {@code oldValue} to
+     * {@code newValue} - either the officer/owner deliberately edited it
+     * (immediately, or a queued edit finally being committed at settlement),
+     * or the automatic upkeep dismantle/restore cycle moved it.
+     * <p>
+     * Only a genuine cross-tier LOOSENING (see
+     * {@link ProtectionResolution#strictness}) clears anything, and only
+     * chunk-level overrides in THIS region for THIS property that are now
+     * stricter than the new baseline: the region owner deliberately decided
+     * this for the whole region, including privately-owned chunks in it, so
+     * there's no "wait for funds and it springs back" case to preserve an
+     * override for here - unlike an automatic dismantle
+     * ({@link ProtectionRollbackService#suspendProtection}), which only ever
+     * lowers a region's value (never higher than it was), so calling this
+     * from there is always a no-op by construction. A same-tier move (e.g.
+     * Allies -> Team) never clears anything either, since the override
+     * stays looser-or-equal to the new value regardless.
+     */
+    static boolean clearOverridesInvalidatedByRegionChange(
+            FtbHookSavedData savedData, UUID teamId, UUID regionId, ProtectionProperty property, String newValue
+    ) {
+        Map<String, ChunkOwnership> ownershipForTeam = savedData.getChunkOwnershipForTeam(teamId);
+        if (ownershipForTeam.isEmpty()) {
+            return false;
+        }
+        boolean changed = false;
+        for (var entry : ownershipForTeam.entrySet()) {
+            String chunkKey = entry.getKey();
+            ChunkOwnership ownership = entry.getValue();
+            String overrideValue = ownership.protectionOverride().get(property.id());
+            if (overrideValue == null) {
+                continue;
+            }
+            if (!savedData.getChunkRegion(teamId, chunkKey).equals(regionId)) {
+                continue;
+            }
+            if (ProtectionResolution.isLooserOrEqual(property, overrideValue, newValue)) {
+                continue;
+            }
+            savedData.setChunkOwnership(teamId, chunkKey, ownership.withoutOverrideProperty(property.id()));
+            changed = true;
+        }
+        return changed;
+    }
+
+    /**
      * Applies a protection-property edit made from the Region settings
      * screen. Cost-neutral changes (vs. the currently billed price) apply
      * immediately; anything else is queued for the next upkeep settlement,
@@ -381,6 +430,9 @@ public final class RegionService {
                     ? region.withoutProperty(property.id())
                     : region.withProperty(property.id(), newValue);
             savedData.updateRegion(teamId, updatedRegion);
+            if (clearOverridesInvalidatedByRegionChange(savedData, teamId, regionId, property, newValue)) {
+                MarketplaceService.broadcastChunkOwnership(server);
+            }
             if (pendingState.hasPendingProperty(key)) {
                 savedData.setPendingState(teamId, pendingState.withoutPendingProperty(key));
             }
@@ -427,6 +479,38 @@ public final class RegionService {
         return count;
     }
 
+    /** How many of this region's chunks are currently force-loaded (actual FTB Chunks state, no pending deltas). */
+    public static int countForceLoadedChunks(MinecraftServer server, Team team, UUID regionId) {
+        FtbHookSavedData savedData = FtbHookSavedData.get(server);
+        UUID teamId = team.getTeamId();
+        ChunkTeamData chunkData = FTBChunksAPI.api().getManager().getOrCreateData(team);
+        int count = 0;
+        for (ClaimedChunk chunk : chunkData.getForceLoadedChunks()) {
+            if (savedData.getChunkRegion(teamId, ChunkPosKey.encode(chunk.getPos())).equals(regionId)) {
+                count++;
+            }
+        }
+        return count;
+    }
+
+    /** Same as {@link #countForceLoadedChunks}, plus this region's share of queued pending force-load/unload requests - mirrors {@code ProtectionPricing.countEffectiveForceLoads}, broken down per region. */
+    public static int countEffectiveForceLoadedChunks(MinecraftServer server, Team team, UUID regionId, TeamPendingState pendingState) {
+        FtbHookSavedData savedData = FtbHookSavedData.get(server);
+        UUID teamId = team.getTeamId();
+        int count = countForceLoadedChunks(server, team, regionId);
+        for (String chunkKey : pendingState.pendingForceLoads()) {
+            if (savedData.getChunkRegion(teamId, chunkKey).equals(regionId)) {
+                count++;
+            }
+        }
+        for (String chunkKey : pendingState.pendingForceUnloads()) {
+            if (savedData.getChunkRegion(teamId, chunkKey).equals(regionId)) {
+                count--;
+            }
+        }
+        return Math.max(count, 0);
+    }
+
     public static SyncRegionMembershipPayload createMembershipPayload(MinecraftServer server) {
         return new SyncRegionMembershipPayload(FtbHookSavedData.get(server).getAllChunkRegions());
     }
@@ -445,10 +529,14 @@ public final class RegionService {
         java.util.Map<UUID, Integer> billableCounts = new java.util.HashMap<>();
         java.util.Map<UUID, Long> currentUpkeep = new java.util.HashMap<>();
         java.util.Map<UUID, Long> pendingUpkeep = new java.util.HashMap<>();
+        java.util.Map<UUID, Integer> forceLoadCounts = new java.util.HashMap<>();
+        java.util.Map<UUID, Long> forceLoadCurrentUpkeep = new java.util.HashMap<>();
+        java.util.Map<UUID, Long> forceLoadPendingUpkeep = new java.util.HashMap<>();
         Team team = dev.malik.lcftbhook.teams.FtbTeamCatalog.resolve(server, teamId);
         if (team != null && FTBChunksAPI.api().isManagerLoaded()) {
             TeamPendingState pendingState = savedData.getPendingState(teamId);
             ProtectionPricing.ChunkCounts billable = ProtectionPricing.countBillableChunks(server, team);
+            boolean chargeForceLoad = UpkeepGating.shouldChargeForceLoad(server, team);
             for (UUID regionId : savedData.getRegionOrder(teamId)) {
                 counts.put(regionId, countChunks(server, team, regionId));
                 Region region = savedData.getRegion(teamId, regionId);
@@ -456,12 +544,25 @@ public final class RegionService {
                 int billableChunks = rc != null ? rc.billableChunks() : 0;
                 billableCounts.put(regionId, billableChunks);
                 if (region != null) {
-                    currentUpkeep.put(regionId, ProtectionPricing.regionBasePrice(region, Map.of()) * billableChunks);
-                    pendingUpkeep.put(regionId, ProtectionPricing.regionBasePrice(region, pendingState.pendingProperties()) * billableChunks);
+                    // regionBasePrice is priced per ProtectionProperty.PRICE_UNIT_CHUNKS
+                    // chunks, not per single chunk - see ProtectionPricing.calculateProtectionCopper.
+                    currentUpkeep.put(regionId,
+                            (ProtectionPricing.regionBasePrice(region, Map.of()) * billableChunks) / ProtectionProperty.PRICE_UNIT_CHUNKS);
+                    pendingUpkeep.put(regionId,
+                            (ProtectionPricing.regionBasePrice(region, pendingState.pendingProperties()) * billableChunks) / ProtectionProperty.PRICE_UNIT_CHUNKS);
                 }
+                int flCurrentCount = countForceLoadedChunks(server, team, regionId);
+                int flPendingCount = countEffectiveForceLoadedChunks(server, team, regionId, pendingState);
+                forceLoadCounts.put(regionId, flCurrentCount);
+                forceLoadCurrentUpkeep.put(regionId, chargeForceLoad ? ProtectionPricing.calculateForceLoadCopper(flCurrentCount) : 0L);
+                forceLoadPendingUpkeep.put(regionId, chargeForceLoad ? ProtectionPricing.calculateForceLoadCopper(flPendingCount) : 0L);
             }
         }
-        return new SyncRegionsPayload(savedData.getRegionOrder(teamId), savedData.getRegions(teamId), counts, billableCounts, currentUpkeep, pendingUpkeep);
+        return new SyncRegionsPayload(
+                savedData.getRegionOrder(teamId), savedData.getRegions(teamId),
+                counts, billableCounts, currentUpkeep, pendingUpkeep,
+                forceLoadCounts, forceLoadCurrentUpkeep, forceLoadPendingUpkeep
+        );
     }
 
     public static void syncRegionsToTeam(MinecraftServer server, Team team) {

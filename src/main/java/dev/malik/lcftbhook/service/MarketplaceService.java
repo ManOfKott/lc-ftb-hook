@@ -54,7 +54,9 @@ public final class MarketplaceService {
         MinecraftServer server = actor.server;
         FtbHookSavedData savedData = FtbHookSavedData.get(server);
         int listed = 0;
-        int denied = 0;
+        int notEligible = 0;
+        int sellingDisabled = 0;
+        int freshlyClaimed = 0;
         int notFound = 0;
 
         for (String chunkKey : chunkKeys) {
@@ -73,13 +75,27 @@ public final class MarketplaceService {
             boolean eligible = asCountry
                     ? ownership.isStateOwned() && team.getRankForPlayer(actor.getUUID()).isOfficerOrBetter()
                     : !ownership.isStateOwned() && actor.getUUID().equals(ownership.privateOwner());
+            if (!eligible) {
+                LCFtbHook.LOGGER.info(
+                        "marketplace listForSale denied (not eligible): chunk={} asCountry={} isStateOwned={} privateOwner={} actorRank={}",
+                        chunkKey, asCountry, ownership.isStateOwned(), ownership.privateOwner(), team.getRankForPlayer(actor.getUUID())
+                );
+                notEligible++;
+                continue;
+            }
             // A private owner reselling their own chunk (not "as country" - that's the
             // team choosing to sell off state land, unaffected by this setting) needs
             // the owning Region to still allow it - an officer/owner may have disabled
             // private reselling for that Region after the chunk was already sold.
-            if (eligible && !asCountry) {
+            // Tracked separately from "not eligible" - the ownership check above already
+            // passed, so telling the player it's "not theirs to sell" here would be
+            // straight-up wrong, not just unhelpful.
+            if (!asCountry) {
                 Region region = RegionService.resolveRegion(server, team.getTeamId(), chunkKey);
-                eligible = region.allowPrivateSelling();
+                if (!region.allowPrivateSelling()) {
+                    sellingDisabled++;
+                    continue;
+                }
             }
             // A freshly claimed chunk (newly added to the team's territory,
             // not previously claimed) can't be listed until the team's next
@@ -88,15 +104,8 @@ public final class MarketplaceService {
             // such restriction - a private buyer must be able to resell
             // right away. Matches the client-side menu gating in
             // ChunkContextMenuBuilder/XaeroMarketplaceMenu.
-            if (eligible && savedData.isChunkFreshlyClaimed(team.getTeamId(), chunkKey)) {
-                eligible = false;
-            }
-            if (!eligible) {
-                LCFtbHook.LOGGER.info(
-                        "marketplace listForSale denied: chunk={} asCountry={} isStateOwned={} privateOwner={} actorRank={}",
-                        chunkKey, asCountry, ownership.isStateOwned(), ownership.privateOwner(), team.getRankForPlayer(actor.getUUID())
-                );
-                denied++;
+            if (savedData.isChunkFreshlyClaimed(team.getTeamId(), chunkKey)) {
+                freshlyClaimed++;
                 continue;
             }
 
@@ -108,8 +117,14 @@ public final class MarketplaceService {
             broadcastChunkOwnership(server);
             actor.displayClientMessage(Component.translatable("message.lc_ftb_hook.marketplace_listed", listed), false);
         }
-        if (denied > 0) {
-            actor.displayClientMessage(Component.translatable("message.lc_ftb_hook.marketplace_list_denied", denied), false);
+        if (notEligible > 0) {
+            actor.displayClientMessage(Component.translatable("message.lc_ftb_hook.marketplace_list_denied", notEligible), false);
+        }
+        if (sellingDisabled > 0) {
+            actor.displayClientMessage(Component.translatable("message.lc_ftb_hook.marketplace_list_selling_disabled", sellingDisabled), false);
+        }
+        if (freshlyClaimed > 0) {
+            actor.displayClientMessage(Component.translatable("message.lc_ftb_hook.marketplace_list_freshly_claimed", freshlyClaimed), false);
         }
         if (notFound > 0) {
             actor.displayClientMessage(Component.translatable("message.lc_ftb_hook.marketplace_not_found", notFound), false);
@@ -271,7 +286,9 @@ public final class MarketplaceService {
                 accountsById.put(costEntry.getKey(), account);
             }
             for (Map.Entry<UUID, IBankAccount> accountEntry : accountsById.entrySet()) {
-                accountEntry.getValue().withdrawMoney(MoneyUtil.fromCopper(costPerTeam.get(accountEntry.getKey())));
+                MoneyValue teamCost = MoneyUtil.fromCopper(costPerTeam.get(accountEntry.getKey()));
+                accountEntry.getValue().withdrawMoney(teamCost);
+                dev.malik.lcftbhook.bank.BankTransactionLog.logWithdraw(accountEntry.getValue(), "Chunk Purchase", teamCost);
             }
         } else {
             IBankAccount payerAccount = personalAccount(buyer.getUUID());
@@ -284,6 +301,7 @@ public final class MarketplaceService {
                 return;
             }
             payerAccount.withdrawMoney(total);
+            dev.malik.lcftbhook.bank.BankTransactionLog.logWithdraw(payerAccount, "Chunk Purchase", total);
         }
 
         for (Entry entry : entries) {
@@ -292,7 +310,9 @@ public final class MarketplaceService {
                     ? BankAccountHelper.getAccountForTeam(server, entry.team())
                     : personalAccount(entry.ownership().privateOwner());
             if (sellerAccount != null) {
-                sellerAccount.depositMoney(MoneyUtil.fromCopper(price));
+                MoneyValue saleAmount = MoneyUtil.fromCopper(price);
+                sellerAccount.depositMoney(saleAmount);
+                dev.malik.lcftbhook.bank.BankTransactionLog.logDeposit(sellerAccount, "Chunk Sale", saleAmount);
             }
 
             ChunkOwnership updated = asCountry
@@ -312,9 +332,15 @@ public final class MarketplaceService {
     }
 
     /**
-     * Single-chunk only (no batch). Refuses if {@code actor} isn't the
-     * chunk's private owner, or if {@code value} would be stricter than the
-     * owning region's current value for that property (loosen-only).
+     * Single-chunk only (no batch). Refuses only if {@code actor} isn't the
+     * chunk's private owner - the stored preference itself is never gated on
+     * whether it's currently achievable against the owning region's value
+     * (that's an enforcement/display concern, see
+     * {@link ProtectionResolution#effectiveValue}, not a write-time one): an
+     * owner must always be able to set their preference, even while the
+     * region can't currently deliver it (e.g. dismantled for non-payment),
+     * so it's already in place the moment the region's protection is
+     * restored.
      */
     public static void setChunkOverride(ServerPlayer actor, String chunkKey, ProtectionProperty property, String value) {
         MinecraftServer server = actor.server;
@@ -329,13 +355,6 @@ public final class MarketplaceService {
         FtbHookSavedData savedData = FtbHookSavedData.get(server);
         ChunkOwnership ownership = savedData.getChunkOwnership(team.getTeamId(), chunkKey);
         if (ownership.isStateOwned() || !actor.getUUID().equals(ownership.privateOwner())) {
-            return;
-        }
-
-        Region region = RegionService.resolveRegion(server, team.getTeamId(), chunkKey);
-        String regionValue = region.propertyValue(property);
-        if (!ProtectionResolution.isLooserOrEqual(property, value, regionValue)) {
-            actor.displayClientMessage(Component.translatable("message.lc_ftb_hook.marketplace_override_too_strict"), false);
             return;
         }
 
@@ -461,16 +480,40 @@ public final class MarketplaceService {
         }
         if (totalCost > 0 && teamAccount != null) {
             teamAccount.withdrawMoney(total);
+            dev.malik.lcftbhook.bank.BankTransactionLog.logWithdraw(teamAccount, "Chunk Expropriation", total);
         }
 
+        Map<UUID, Integer> expropriatedCountByOwner = new HashMap<>();
         for (Entry entry : toExpropriate) {
+            UUID ownerId = entry.ownership().privateOwner();
             if (compensationPerChunk > 0) {
-                IBankAccount ownerAccount = personalAccount(entry.ownership().privateOwner());
+                IBankAccount ownerAccount = personalAccount(ownerId);
                 if (ownerAccount != null) {
-                    ownerAccount.depositMoney(MoneyUtil.fromCopper(compensationPerChunk));
+                    MoneyValue compensation = MoneyUtil.fromCopper(compensationPerChunk);
+                    ownerAccount.depositMoney(compensation);
+                    dev.malik.lcftbhook.bank.BankTransactionLog.logDeposit(ownerAccount, "Chunk Expropriation", compensation);
                 }
             }
+            expropriatedCountByOwner.merge(ownerId, 1, Integer::sum);
             savedData.setChunkOwnership(actorTeam.getTeamId(), entry.key(), ChunkOwnership.resetToStateOwned());
+        }
+
+        // Only the actor (whoever ran the expropriation) got a summary
+        // before - each affected private owner had no idea their chunk(s)
+        // were just taken back, if they happened to be online to see it.
+        Team notifiedActorTeam = actorTeam;
+        for (Map.Entry<UUID, Integer> ownerEntry : expropriatedCountByOwner.entrySet()) {
+            ServerPlayer ownerPlayer = server.getPlayerList().getPlayer(ownerEntry.getKey());
+            if (ownerPlayer == null) {
+                continue;
+            }
+            MoneyValue ownerCompensation = MoneyUtil.fromCopper(compensationPerChunk * ownerEntry.getValue());
+            ownerPlayer.displayClientMessage(Component.translatable(
+                    "message.lc_ftb_hook.marketplace_expropriated_notice",
+                    ownerEntry.getValue(),
+                    WarService.displayName(notifiedActorTeam),
+                    MoneyMessageUtil.formatValue(ownerCompensation)
+            ), false);
         }
 
         broadcastChunkOwnership(server);

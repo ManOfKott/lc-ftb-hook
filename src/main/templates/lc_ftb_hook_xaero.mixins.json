@@ -6,7 +6,7 @@
     "ClaimsHighlighterTooltipMixin",
     "GuiMapMarketplaceMixin",
     "GuiMapClaimInfoPanelMixin",
-    "WorldMapSessionHighlighterMixin"
+    "HighlighterRegistryEndMixin"
   ],
   "injectors": {
     "defaultRequire": ${xaero_mixin_default_require}

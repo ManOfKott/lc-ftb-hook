@@ -142,7 +142,11 @@ public final class XaeroMarketplaceMenu {
                     ScreenOpener.openSalePrice(null, chunkKeys, true));
         }
         if (single && !ownership.isStateOwned() && ownership.privateOwner().equals(localPlayer)) {
-            if (!ownership.isListed() && !ClientUnsettledChunks.isUnsettled(firstKey) && resolveRegion(firstKey).allowPrivateSelling()) {
+            // The land's own owning team, not necessarily the viewer's - see
+            // resolveRegion's javadoc.
+            Team firstOwningTeam = chunks.get(0).getTeam().orElse(null);
+            if (!ownership.isListed() && !ClientUnsettledChunks.isUnsettled(firstKey)
+                    && resolveRegion(firstKey, firstOwningTeam != null ? firstOwningTeam.getTeamId() : null).allowPrivateSelling()) {
                 addOption(options, "gui.lc_ftb_hook.marketplace.sell", self, screen ->
                         ScreenOpener.openSalePrice(null, chunkKeys, false));
             }
@@ -231,9 +235,17 @@ public final class XaeroMarketplaceMenu {
         }
     }
 
-    private static Region resolveRegion(String chunkKey) {
+    /**
+     * {@code teamId} is the LAND's owning team, not necessarily the viewer's
+     * own - uses the globally-broadcast public region cache (not
+     * {@code ClientRegions}, which only ever holds the viewer's own team's
+     * regions) so this resolves correctly for a privately-owned chunk sitting
+     * in another team's territory too, same as {@code ProtectionInfoLines}.
+     */
+    private static Region resolveRegion(String chunkKey, @javax.annotation.Nullable UUID teamId) {
         UUID regionId = ClientRegionMembership.rawRegionOf(chunkKey);
-        Region region = regionId != null ? ClientRegions.get(regionId) : ClientRegions.getDefault();
+        Region region = regionId != null ? dev.malik.lcftbhook.client.ClientPublicRegions.get(regionId)
+                : teamId != null ? dev.malik.lcftbhook.client.ClientPublicRegions.getDefaultFor(teamId) : null;
         return region != null ? region : Region.createDefault();
     }
 

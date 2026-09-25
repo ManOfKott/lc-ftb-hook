@@ -776,6 +776,12 @@ public class FtbHookSavedData extends SavedData {
         return changed;
     }
 
+    /** Sparse chunkKey -> ChunkOwnership map for one team only (unlike {@link #getAllChunkOwnership}, which merges every team). */
+    public Map<String, ChunkOwnership> getChunkOwnershipForTeam(UUID teamId) {
+        TeamLinkEntry entry = teamLinks.get(teamId);
+        return entry == null ? Map.of() : entry.chunkOwnership();
+    }
+
     public Map<String, ChunkOwnership> getAllChunkOwnership() {
         Map<String, ChunkOwnership> all = new HashMap<>();
         for (TeamLinkEntry entry : teamLinks.values()) {

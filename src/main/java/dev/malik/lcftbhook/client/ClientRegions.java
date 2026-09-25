@@ -15,6 +15,9 @@ public final class ClientRegions {
     private static Map<UUID, Integer> billableChunkCounts = Map.of();
     private static Map<UUID, Long> currentUpkeepCopper = Map.of();
     private static Map<UUID, Long> pendingUpkeepCopper = Map.of();
+    private static Map<UUID, Integer> forceLoadCounts = Map.of();
+    private static Map<UUID, Long> forceLoadCurrentUpkeepCopper = Map.of();
+    private static Map<UUID, Long> forceLoadPendingUpkeepCopper = Map.of();
 
     private ClientRegions() {
     }
@@ -25,7 +28,10 @@ public final class ClientRegions {
             Map<UUID, Integer> counts,
             Map<UUID, Integer> billableCounts,
             Map<UUID, Long> currentUpkeep,
-            Map<UUID, Long> pendingUpkeep
+            Map<UUID, Long> pendingUpkeep,
+            Map<UUID, Integer> forceLoadCountsIn,
+            Map<UUID, Long> forceLoadCurrentUpkeepIn,
+            Map<UUID, Long> forceLoadPendingUpkeepIn
     ) {
         regionOrder = List.copyOf(order);
         regions = Map.copyOf(updated);
@@ -33,6 +39,9 @@ public final class ClientRegions {
         billableChunkCounts = Map.copyOf(billableCounts);
         currentUpkeepCopper = Map.copyOf(currentUpkeep);
         pendingUpkeepCopper = Map.copyOf(pendingUpkeep);
+        forceLoadCounts = Map.copyOf(forceLoadCountsIn);
+        forceLoadCurrentUpkeepCopper = Map.copyOf(forceLoadCurrentUpkeepIn);
+        forceLoadPendingUpkeepCopper = Map.copyOf(forceLoadPendingUpkeepIn);
     }
 
     public static List<UUID> regionOrder() {
@@ -60,6 +69,21 @@ public final class ClientRegions {
     /** What this region's upkeep would be once every currently-queued pending property change for it settles. */
     public static long pendingUpkeepCopper(UUID regionId) {
         return pendingUpkeepCopper.getOrDefault(regionId, 0L);
+    }
+
+    /** How many of this region's chunks are currently force-loaded. */
+    public static int forceLoadCount(UUID regionId) {
+        return forceLoadCounts.getOrDefault(regionId, 0);
+    }
+
+    /** This region's own current force-load upkeep (already accounting for forceLoadUpkeepMode gating). */
+    public static long forceLoadCurrentUpkeepCopper(UUID regionId) {
+        return forceLoadCurrentUpkeepCopper.getOrDefault(regionId, 0L);
+    }
+
+    /** What this region's force-load upkeep would be once every currently-queued pending force-load/unload settles. */
+    public static long forceLoadPendingUpkeepCopper(UUID regionId) {
+        return forceLoadPendingUpkeepCopper.getOrDefault(regionId, 0L);
     }
 
     @Nullable

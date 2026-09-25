@@ -12,8 +12,10 @@ import java.util.UUID;
 
 /**
  * Configurable order in which a region's protections are disabled when
- * upkeep cannot be paid, and the order regions themselves are dismantled in
- * (top of the region list first, per the team's regionOrder).
+ * upkeep cannot be paid, and the order regions themselves are dismantled in:
+ * index 0 of the team's stored regionOrder first. RegionListScreen displays
+ * this reversed (dismantled-last at the visual top), so don't read "first"
+ * here as "top of the GUI list".
  */
 public final class ProtectionDismantleOrder {
     private ProtectionDismantleOrder() {

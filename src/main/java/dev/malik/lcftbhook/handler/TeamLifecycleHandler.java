@@ -39,6 +39,26 @@ public class TeamLifecycleHandler {
     @SubscribeEvent
     public void onServerStarted(ServerStartedEvent event) {
         reconcileTeams(event.getServer());
+        // ServerAccountHelper.get() self-heals a stale "Unknown" owner name,
+        // but only when OUR code happens to touch the account (a sink
+        // deposit, or /lc_ftb_hook server_account) - an account created (or
+        // last saved) before that fix existed would keep showing "Unknown"
+        // in LC's own UI indefinitely if nobody happened to trigger either
+        // first. Touching it once here guarantees it's already correct the
+        // moment the server is up, not dependent on some other trigger
+        // happening first.
+        //
+        // Deferred one tick (server.execute) rather than called directly
+        // here - LC's own bank data (CustomSaveData "lightmanscurrency:bank_accounts")
+        // isn't marked ready yet at the exact moment ServerStartedEvent
+        // fires (confirmed live: LC logs "Attempted to get custom data
+        // ... before the server started!" with a full stack trace pointing
+        // straight at this call when it runs synchronously here). Harmless
+        // in practice (the account access just silently no-ops that one
+        // attempt), but noisy and fragile to rely on - by the next tick
+        // every ServerStartedEvent listener, LC's own included, has
+        // finished.
+        event.getServer().execute(dev.malik.lcftbhook.bank.ServerAccountHelper::get);
     }
 
     private void onTeamCreated(TeamCreatedEvent event) {

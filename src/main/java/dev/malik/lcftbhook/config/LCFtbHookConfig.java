@@ -41,6 +41,7 @@ public final class LCFtbHookConfig {
         public final ModConfigSpec.BooleanValue warEnabled;
         public final ModConfigSpec.ConfigValue<List<? extends String>> protectionDismantleOrder;
         public final ModConfigSpec.BooleanValue debugTestTeamCommands;
+        public final ModConfigSpec.BooleanValue lockClaimVisibilityPublic;
 
         Server(ModConfigSpec.Builder builder) {
             builder.comment("LC FTB Hook server configuration").push("general");
@@ -114,7 +115,18 @@ public final class LCFtbHookConfig {
 
             upkeepPeriodMinutes = builder
                     .comment("How often upkeep is charged, in real-time minutes")
-                    .defineInRange("upkeepPeriodMinutes", 60, 1, 10080);
+                    .defineInRange("upkeepPeriodMinutes", 5, 1, 10080);
+
+            lockClaimVisibilityPublic = builder
+                    .comment(
+                            "Whether a team's claim_visibility (FTB Chunks' own native setting for who can see a team's",
+                            "claims on the map) is force-locked to Public and can't be changed. When true (default), any",
+                            "attempt to change it is reverted and the control is disabled in FTB's team settings screen -",
+                            "matches the original design intent of always making claims visible (e.g. so wars/marketplace",
+                            "targeting can't be dodged by hiding). Set to false to let teams set their own claim visibility",
+                            "(Public/Allies/Team) freely again, same as vanilla FTB Chunks."
+                    )
+                    .define("lockClaimVisibilityPublic", true);
 
             forceLoadUpkeepMode = builder
                     .comment(
@@ -134,31 +146,39 @@ public final class LCFtbHookConfig {
                     .defineEnum("protectionUpkeepMode", ProtectionUpkeepMode.DEFAULT);
 
             builder.pop();
-            builder.comment("Per-protection base prices added to upkeep calculation (b in c = b * n)").push("protectionPrices");
+            builder.comment(
+                    "Per-protection base prices added to upkeep calculation (b in c = b * n / 10, rounded down).",
+                    "IMPORTANT: these prices are per 10 BILLABLE CHUNKS that have the property active, not per single",
+                    "chunk - a value of V means V copper is owed once 10 chunks have it active, rounded DOWN. E.g. a",
+                    "value of 1 charges nothing below 10 such chunks, then 1 copper at 10-19 chunks, 2 copper at",
+                    "20-29, and so on - this lets a price be effectively \"a fraction of a copper per chunk\" without",
+                    "needing fractional money. A value of 10 is exactly 1 copper per single chunk, same as the old",
+                    "per-chunk pricing (multiply an old per-chunk copper price by 10 to keep it equivalent)."
+            ).push("protectionPrices");
 
             mobGriefProtectionPrice = builder
-                    .comment("Price when mob griefing protection is enabled (Allow Mob Griefing = false). Default: 80 copper.")
-                    .defineInRange("mobGriefProtectionPrice", 80L, 0L, Long.MAX_VALUE);
+                    .comment("Price when mob griefing protection is enabled (Allow Mob Griefing = false), per 10 chunks. Default: 800 (= 80 copper per 10 chunks = 8 copper/chunk).")
+                    .defineInRange("mobGriefProtectionPrice", 800L, 0L, Long.MAX_VALUE);
 
             explosionProtectionPrice = builder
-                    .comment("Price when explosion protection is enabled (Allow Explosion Damage = false). Default: 70 copper (second cheapest).")
-                    .defineInRange("explosionProtectionPrice", 70L, 0L, Long.MAX_VALUE);
+                    .comment("Price when explosion protection is enabled (Allow Explosion Damage = false), per 10 chunks. Default: 700 (second cheapest).")
+                    .defineInRange("explosionProtectionPrice", 700L, 0L, Long.MAX_VALUE);
 
             pvpDisablePrice = builder
-                    .comment("Price when PvP is disabled (Allow PvP Combat = false). Default: 50 copper (cheapest protection).")
-                    .defineInRange("pvpDisablePrice", 50L, 0L, Long.MAX_VALUE);
+                    .comment("Price when PvP is disabled (Allow PvP Combat = false), per 10 chunks. Default: 500 (cheapest protection).")
+                    .defineInRange("pvpDisablePrice", 500L, 0L, Long.MAX_VALUE);
 
             blockInteractProtectionPrice = builder
-                    .comment("Price when block interact mode is not public. Default: 100 copper.")
-                    .defineInRange("blockInteractProtectionPrice", 100L, 0L, Long.MAX_VALUE);
+                    .comment("Price when block interact mode is not public, per 10 chunks. Default: 1000 (= 100 copper per 10 chunks = 10 copper/chunk).")
+                    .defineInRange("blockInteractProtectionPrice", 1000L, 0L, Long.MAX_VALUE);
 
             blockEditProtectionPrice = builder
-                    .comment("Price when block edit mode is not public. Default: 100 copper.")
-                    .defineInRange("blockEditProtectionPrice", 100L, 0L, Long.MAX_VALUE);
+                    .comment("Price when block edit mode is not public, per 10 chunks. Default: 1000.")
+                    .defineInRange("blockEditProtectionPrice", 1000L, 0L, Long.MAX_VALUE);
 
             entityInteractProtectionPrice = builder
-                    .comment("Price when entity interact mode is not public. Default: 100 copper.")
-                    .defineInRange("entityInteractProtectionPrice", 100L, 0L, Long.MAX_VALUE);
+                    .comment("Price when entity interact mode is not public, per 10 chunks. Default: 1000.")
+                    .defineInRange("entityInteractProtectionPrice", 1000L, 0L, Long.MAX_VALUE);
 
             builder.pop();
             builder.comment("War declarations between claim teams (teams or solo players with claimed chunks)").push("war");
